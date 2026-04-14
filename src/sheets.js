@@ -95,25 +95,26 @@ export class SheetClient {
   }
 
   async appendActionLog(logRow) {
-  const values = [[
-    '',
-    new Date().toISOString(),
-    logRow.entity || 'runtime',
-    logRow.threadId || '',
-    logRow.action || '',
-    'runtime',
-    logRow.oldValue || '',
-    JSON.stringify(logRow.meta || {}),
-    logRow.reason || ''
-  ]];
+    const values = [[
+      '',
+      new Date().toISOString(),
+      logRow.entity || 'runtime',
+      logRow.threadId || '',
+      logRow.action || '',
+      'runtime',
+      logRow.oldValue || '',
+      JSON.stringify(logRow.meta || {}),
+      logRow.reason || ''
+    ]];
 
-  await this.sheets.spreadsheets.values.append({
-    spreadsheetId: this.sheetId,
-    range: `${this.tabs.actionLog}!A:I`,
-    valueInputOption: 'USER_ENTERED',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: { values }
-  });
+    await this.sheets.spreadsheets.values.append({
+      spreadsheetId: this.sheetId,
+      range: `${this.tabs.actionLog}!A:I`,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values }
+    });
+  }
 }
 
 function columnLabel(index1Based) {
