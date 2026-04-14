@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OneLifeCare Dashboard Live V1</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #ddd; padding: 8px; font-size: 13px; }
+    th { background: #f7f7f7; text-align: left; }
+    button { padding: 6px 10px; cursor: pointer; }
+    .muted { color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h2>Dashboard Live V1</h2>
+
+  <div class="row">
+    <label for="pageSelect">Page:</label>
+    <select id="pageSelect"></select>
+    <button id="refreshBtn">Refresh</button>
+    <span class="muted">Auto refresh every 15s</span>
+  </div>
+
+  <div class="card">
+    <h3>Page / Bot Status</h3>
+    <div class="row">
+      <div>AI_Page: <strong id="aiPageValue">-</strong></div>
+      <button id="togglePageAiBtn">Toggle AI_Page</button>
+    </div>
+    <div class="row">
+      <div>AI_Enabled: <strong id="botEnabledValue">-</strong></div>
+      <button id="toggleBotEnabledBtn">Toggle AI_Enabled</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Chats (ChatControl)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Thread_ID</th>
+          <th>Customer_Name</th>
+          <th>Phone_1</th>
+          <th>AI_Chat</th>
+          <th>Chat_Stage</th>
+          <th>Last_Action</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="chatsBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Recent Audit</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Created_At</th>
+          <th>Entity</th>
+          <th>Record_ID</th>
+          <th>Action</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody id="auditBody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    const state = { selectedPageId: '' };
+
+    async function postJson(url, payload) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      return res.json();
+    }
+
+    function render(data) {
+      const pageSelect = document.getElementById('pageSelect');
+      if (!pageSelect.options.length) {
+        pageSelect.innerHTML = data.pages
+          .map(p => `<option value="${p.Page_ID}">${p.Page_Name || p.Page_ID}</option>`)
+          .join('');
+      }
+      if (state.selectedPageId) pageSelect.value = state.selectedPageId;
+
+      document.getElementById('aiPageValue').textContent = data.selectedPage?.AI_Page || '-';
+      document.getElementById('botEnabledValue').textContent = data.botControl?.AI_Enabled || '-';
+
+      document.getElementById('chatsBody').innerHTML = (data.chats || []).map(c => `
+        <tr>
+          <td>${c.Thread_ID || ''}</td>
+          <td>${c.Customer_Name || ''}</td>
+          <td>${c.Phone_1 || ''}</td>
+          <td>${c.AI_Chat || ''}</td>
+          <td>${c.Chat_Stage || ''}</td>
+          <td>${c.Last_Action || ''}</td>
+          <td><button data-thread="${c.Thread_ID}" data-ai="${c.AI_Chat || ''}" class="toggleChatAiBtn">Toggle</button></td>
+        </tr>
+      `).join('');
+
+      document.getElementById('auditBody').innerHTML = (data.audit || []).map(a => `
+        <tr>
+          <td>${a.Created_At || ''}</td>
+          <td>${a.Entity || ''}</td>
+          <td>${a.Record_ID || ''}</td>
+          <td>${a.Action || ''}</td>
+          <td>${a.Reason || ''}</td>
+        </tr>
+      `).join('');
+
+      document.querySelectorAll('.toggleChatAiBtn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const threadId = btn.dataset.thread;
+          const current = (btn.dataset.ai || '').toUpperCase();
+          const next = current === 'ON' ? 'OFF' : 'ON';
+          await postJson('/api/dashboard/chat-ai', {
+            pageId: state.selectedPageId,
+            threadId,
+            value: next,
+            reason: next === 'OFF' ? 'dashboard_manual_off' : ''
+          });
+          await load();
+        });
+      });
+    }
+
+    async function load() {
+      const qs = state.selectedPageId ? `?pageId=${encodeURIComponent(state.selectedPageId)}` : '';
+      const res = await fetch(`/api/dashboard/bootstrap${qs}`);
+      const data = await res.json();
+      if (!state.selectedPageId && data.selectedPage?.Page_ID) {
+        state.selectedPageId = data.selectedPage.Page_ID;
+      }
+      render(data);
+    }
+
+    document.getElementById('pageSelect').addEventListener('change', async (e) => {
+      state.selectedPageId = e.target.value;
+      await load();
+    });
+
+    document.getElementById('refreshBtn').addEventListener('click', load);
+
+    document.getElementById('togglePageAiBtn').addEventListener('click', async () => {
+      const current = (document.getElementById('aiPageValue').textContent || '').toUpperCase();
+      const next = current === 'ON' ? 'OFF' : 'ON';
+      await postJson('/api/dashboard/page-ai', { pageId: state.selectedPageId, value: next });
+      await load();
+    });
+
+    document.getElementById('toggleBotEnabledBtn').addEventListener('click', async () => {
+      const current = (document.getElementById('botEnabledValue').textContent || '').toUpperCase();
+      const next = current === 'YES' ? 'No' : 'Yes';
+      await postJson('/api/dashboard/bot-enabled', {
+        pageId: state.selectedPageId,
+        value: next,
+        reason: next === 'No' ? 'dashboard_manual_disable' : ''
+      });
+      await load();
+    });
+
+    load();
+    setInterval(load, 15000);
+  </script>
+</body>
+</html>
