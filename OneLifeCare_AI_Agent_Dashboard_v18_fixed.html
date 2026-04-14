@@ -5035,5 +5035,135 @@ document.addEventListener('DOMContentLoaded',()=>{
   setInterval(()=>{if(Session.isLoggedIn){renderStats();renderAlerts();}},30000);
 });
 </script>
+<script>
+/* Dashboard Live V1 wiring (phase 1): connect core controls to backend API */
+(function(){
+  const liveState = { token: localStorage.getItem('dashboardToken') || '', data: null, selectedPageId: null };
+  if(!liveState.token){
+    liveState.token = window.prompt('Dashboard token');
+    if(liveState.token) localStorage.setItem('dashboardToken', liveState.token);
+  }
+
+  async function apiFetch(path, opts={}){
+    const headers = Object.assign({'x-dashboard-token': liveState.token || ''}, opts.headers || {});
+    const res = await fetch(path, Object.assign({}, opts, { headers }));
+    if(!res.ok) throw new Error('API error: ' + res.status);
+    return res.json();
+  }
+
+  async function loadBootstrap(pageId){
+    const qs = pageId ? ('?pageId=' + encodeURIComponent(pageId)) : '';
+    liveState.data = await apiFetch('/api/dashboard/bootstrap' + qs);
+    liveState.selectedPageId = liveState.data?.selectedPage?.Page_ID || liveState.selectedPageId;
+    renderApiBoundParts();
+  }
+
+  function renderApiBoundParts(){
+    const data = liveState.data || {};
+    const selectedPage = data.selectedPage || {};
+    const botControl = data.botControl || {};
+    const chats = data.chats || [];
+    const audit = data.audit || [];
+    const pages = data.pages || [];
+
+    const sel = document.getElementById('page-selector');
+    if(sel){
+      sel.innerHTML = pages.map(p=>`<option value="${p.Page_ID}">${p.Page_Name_Short||p.Page_Name||p.Page_ID}</option>`).join('');
+      if(liveState.selectedPageId) sel.value = liveState.selectedPageId;
+    }
+
+    const aiOn = String(selectedPage.AI_Page||'').toUpperCase()==='ON';
+    const aiBtn = document.getElementById('ai-status-btn');
+    const aiTxt = document.getElementById('ai-status-txt');
+    const aiPageToggle = document.getElementById('ai-page-toggle');
+    if(aiBtn) aiBtn.classList.toggle('off', !aiOn);
+    if(aiTxt) aiTxt.textContent = `AI_Page: ${selectedPage.AI_Page||'-'} | AI_Enabled: ${botControl.AI_Enabled||'-'}`;
+    if(aiPageToggle) aiPageToggle.classList.toggle('on', aiOn);
+
+    const settingsCardBody = document.querySelector('#screen-settings .card .card-body');
+    if(settingsCardBody && !document.getElementById('ai-enabled-toggle')){
+      const wrap = document.createElement('div');
+      wrap.className = 'setting-item mgmt-only';
+      wrap.style.display = 'none';
+      wrap.innerHTML = `
+        <div class="si-info">
+          <div class="si-label">🧠 تفعيل الذكاء (BotControl)</div>
+          <div class="si-desc">Yes / No من BotControl</div>
+        </div>
+        <button class="toggle on" id="ai-enabled-toggle"></button>`;
+      settingsCardBody.insertBefore(wrap, settingsCardBody.firstChild.nextSibling);
+    }
+    const aiEnabledToggle = document.getElementById('ai-enabled-toggle');
+    if(aiEnabledToggle){
+      aiEnabledToggle.classList.toggle('on', String(botControl.AI_Enabled||'').toLowerCase()==='yes');
+      aiEnabledToggle.onclick = async function(){
+        const current = String(botControl.AI_Enabled||'').toLowerCase()==='yes' ? 'Yes' : 'No';
+        const next = current==='Yes' ? 'No' : 'Yes';
+        await apiFetch('/api/dashboard/bot-enabled', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({pageId: liveState.selectedPageId, value: next, reason: next==='No'?'dashboard_toggle':''})
+        });
+        await loadBootstrap(liveState.selectedPageId);
+      };
+    }
+
+    const table = document.getElementById('chat-control-table');
+    if(table){
+      table.innerHTML = chats.length ? `<table class="chat-table"><thead><tr><th>العميل</th><th>المرحلة</th><th>AI</th><th>مستلم</th><th>آخر حركة</th><th></th></tr></thead><tbody>${
+        chats.map(c=>`<tr>
+          <td><div style="font-weight:800;color:var(--navy)">${c.Customer_Name||'—'}</div><div style="font-size:10px;color:var(--gray)">${c.Thread_ID||''}</div></td>
+          <td>${c.Chat_Stage||'—'}</td>
+          <td><span style="font-weight:800;color:${String(c.AI_Chat||'').toUpperCase()==='ON'?'var(--green)':'var(--red)'}">${c.AI_Chat||'-'}</span></td>
+          <td>${c.Assigned_To||'—'}</td>
+          <td style="font-size:11px">${c.Last_Action||'—'}</td>
+          <td><button class="btn ${String(c.AI_Chat||'').toUpperCase()==='ON'?'warn':'success'}" data-thread="${c.Thread_ID}" data-ai="${c.AI_Chat}" style="font-size:11px;padding:5px 10px">${String(c.AI_Chat||'').toUpperCase()==='ON'?'⛔':'▶️'}</button></td>
+        </tr>`).join('')
+      }</tbody></table>` : `<div style="color:var(--gray);font-size:13px;padding:12px">لا توجد شاتات نشطة</div>`;
+
+      table.querySelectorAll('button[data-thread]').forEach(btn=>{
+        btn.onclick = async function(e){
+          e.stopPropagation();
+          const threadId = btn.getAttribute('data-thread');
+          const current = String(btn.getAttribute('data-ai')||'').toUpperCase()==='ON' ? 'ON' : 'OFF';
+          const next = current==='ON' ? 'OFF' : 'ON';
+          await apiFetch('/api/dashboard/chat-ai', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({pageId: liveState.selectedPageId, threadId, value: next, reason: next==='OFF'?'dashboard_toggle':''})
+          });
+          await loadBootstrap(liveState.selectedPageId);
+        };
+      });
+    }
+
+    const auditEl = document.getElementById('audit-preview');
+    if(auditEl){
+      auditEl.innerHTML = audit.slice(0,6).map(a=>`<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px"><span style="font-weight:800">${a.Who||'system'}</span> — ${a.Action||''}<span style="color:var(--gray);font-size:10px;float:left">${a.Created_At||''}</span></div>`).join('') || '<div style="color:var(--gray);font-size:13px">لا يوجد تعديلات بعد</div>';
+    }
+  }
+
+  window.toggleAI = async function(){
+    const selectedPage = liveState.data?.selectedPage || {};
+    const current = String(selectedPage.AI_Page||'').toUpperCase()==='ON' ? 'ON' : 'OFF';
+    const next = current==='ON' ? 'OFF' : 'ON';
+    await apiFetch('/api/dashboard/page-ai', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pageId: liveState.selectedPageId, value: next})
+    });
+    await loadBootstrap(liveState.selectedPageId);
+  };
+  window.toggleAIPage = window.toggleAI;
+  window.onPageChange = async function(){
+    const sel = document.getElementById('page-selector');
+    liveState.selectedPageId = sel ? sel.value : liveState.selectedPageId;
+    await loadBootstrap(liveState.selectedPageId);
+  };
+  window.renderPageSelector = function(){ loadBootstrap(liveState.selectedPageId).catch(()=>{}); };
+  window.renderChatControl = function(){ renderApiBoundParts(); };
+  window.renderAuditPreview = function(){ renderApiBoundParts(); };
+})();
+</script>
 </body>
 </html>
