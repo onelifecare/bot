@@ -34,6 +34,15 @@ export class SheetClient {
     return toObjects(res.data.values || []);
   }
 
+  async readTabRaw(tabName) {
+    const range = `${tabName}!A:ZZ`;
+    const res = await this.sheets.spreadsheets.values.get({ spreadsheetId: this.sheetId, range });
+    const values = res.data.values || [];
+    const header = values[0] || [];
+    const rows = values.slice(1);
+    return { header, rows };
+  }
+
   async getPageById(pageId) {
     const rows = await this.readTab(this.tabs.pages);
     return rows.find((r) => String(r.Page_ID) === String(pageId)) || null;
@@ -113,6 +122,76 @@ export class SheetClient {
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values }
+    });
+  }
+
+  async listPages() {
+    return this.readTab(this.tabs.pages);
+  }
+
+  async listChatControlByPageId(pageId) {
+    const rows = await this.readTab(this.tabs.chatControl);
+    return rows.filter((r) => String(r.Page_ID) === String(pageId));
+  }
+
+  async listRecentAudit(limit = 20) {
+    const rows = await this.readTab(this.tabs.actionLog);
+    return rows.slice(-Math.max(1, Number(limit))).reverse();
+  }
+
+  async updateRowInTab({ tabName, match, updates }) {
+    const { header, rows } = await this.readTabRaw(tabName);
+    if (!header.length) return false;
+
+    const rowIndex = rows.findIndex((row) => {
+      const obj = {};
+      for (let i = 0; i < header.length; i += 1) obj[String(header[i]).trim()] = row[i] ?? '';
+      return match(obj);
+    });
+
+    if (rowIndex < 0) return false;
+
+    const current = rows[rowIndex];
+    const merged = header.map((h, idx) => {
+      const key = String(h).trim();
+      return Object.prototype.hasOwnProperty.call(updates, key) ? updates[key] : (current[idx] ?? '');
+    });
+
+    const sheetRowNumber = rowIndex + 2;
+    const endCol = columnLabel(header.length);
+    const range = `${tabName}!A${sheetRowNumber}:${endCol}${sheetRowNumber}`;
+
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId: this.sheetId,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [merged] }
+    });
+
+    return true;
+  }
+
+  async updatePageAiByPageId(pageId, value) {
+    return this.updateRowInTab({
+      tabName: this.tabs.pages,
+      match: (r) => String(r.Page_ID) === String(pageId),
+      updates: { AI_Page: value }
+    });
+  }
+
+  async updateBotEnabledByPageId(pageId, value, reason = '') {
+    return this.updateRowInTab({
+      tabName: this.tabs.botControl,
+      match: (r) => String(r.Page_ID) === String(pageId),
+      updates: { AI_Enabled: value, Reason: reason, Updated_At: new Date().toISOString() }
+    });
+  }
+
+  async updateChatAiByThreadAndPage({ pageId, threadId, value, reason = '' }) {
+    return this.updateRowInTab({
+      tabName: this.tabs.chatControl,
+      match: (r) => String(r.Page_ID) === String(pageId) && String(r.Thread_ID) === String(threadId),
+      updates: { AI_Chat: value, AI_Chat_OFF_Reason: reason }
     });
   }
 }

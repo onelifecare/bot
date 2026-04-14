@@ -15,6 +15,7 @@ export const config = {
   webhookPath: process.env.WEBHOOK_PATH || '/webhook/messenger',
   verifyToken: required('FB_VERIFY_TOKEN'),
   appSecret: required('FB_APP_SECRET'),
+  dashboardAdminToken: required('DASHBOARD_ADMIN_TOKEN'),
   sheetId: required('GOOGLE_SHEET_ID'),
   serviceAccountEmail: required('GOOGLE_SERVICE_ACCOUNT_EMAIL'),
   serviceAccountPrivateKey: required('GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY').replace(/\\n/g, '\n'),
