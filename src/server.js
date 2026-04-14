@@ -44,7 +44,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/dashboard', (_req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'dashboard-live.html'));
+  res.sendFile(path.join(__dirname, '..', 'OneLifeCare_AI_Agent_Dashboard_v18_fixed.html'));
 });
 
 app.get('/api/dashboard/bootstrap', requireDashboardToken, async (req, res) => {
