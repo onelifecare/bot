@@ -1,126 +1,146 @@
-function normalizeText(value) {
+/**
+ * AI Brain abstraction (Phase 2 - architecture patch)
+ *
+ * الهدف: واجهة موحدة يمكن توصيلها بمزوّد AI حقيقي لاحقًا بدون تعديل runtime.
+ */
+
+function safeText(value) {
   return String(value || '').trim();
 }
 
-function mergeExtractedFields(baseState, extracted) {
-  const next = { ...(baseState || {}) };
-  for (const [k, v] of Object.entries(extracted || {})) {
-    next[k] = v;
-  }
-  return next;
+function extractBasicStateHints(messageText, previousFields) {
+  const hints = { ...(previousFields || {}) };
+  const text = safeText(messageText);
+
+  const phone = text.match(/(?:\+?2)?01[0-2,5]{1}[0-9]{8}/);
+  if (phone) hints.phone_1 = phone[0];
+
+  return hints;
 }
 
-function detectIntent(text) {
-  const t = text.toLowerCase();
-  if (!t) return 'empty';
-  if (/\b(عايز|اريد|abdo|buy|سعر|عرض|كورس)\b/i.test(t)) return 'buy_intent';
-  if (/(احجز|طلب|العنوان|رقم|فون|تليفون|phone)/i.test(t)) return 'booking_data';
-  if (/(دكتور|سكر|ضغط|حامل|مرض|عملية|نزيف|سرطان)/i.test(t)) return 'sensitive_health';
-  if (/(انسان|موظف|حد من الفريق|كلموني|human)/i.test(t)) return 'request_human';
-  if (/(اهلا|السلام|هاي|hi|hello)/i.test(t)) return 'greeting';
-  return 'general';
-}
-
-function extractBasicFields(text) {
-  const extracted = {};
-  const phoneMatch = text.match(/(?:\+?2)?01[0-2,5]{1}[0-9]{8}/);
-  if (phoneMatch) extracted.phone_1 = phoneMatch[0];
-
-  const govList = [
-    'القاهرة', 'الجيزة', 'الإسكندرية', 'القليوبية', 'الشرقية', 'المنوفية', 'الغربية', 'الدقهلية'
-  ];
-  const gov = govList.find((g) => text.includes(g));
-  if (gov) extracted.governorate = gov;
-
-  return extracted;
-}
-
-function chooseOffer(offers, text) {
-  const activeOffers = (offers || []).filter((o) => String(o.Active || '').toLowerCase() === 'yes');
-  if (!activeOffers.length) return null;
-
-  const mentioned = activeOffers.find((o) => text.includes(String(o.Customer_Offer_Name || '')) || text.includes(String(o.Offer_Name || '')));
-  if (mentioned) return {
-    offer_code: mentioned.Offer_Code || '',
-    customer_offer_name: mentioned.Customer_Offer_Name || mentioned.Offer_Name || ''
-  };
-
-  const first = activeOffers[0];
+function buildContextSummary(context) {
+  const safe = context || {};
   return {
-    offer_code: first.Offer_Code || '',
-    customer_offer_name: first.Customer_Offer_Name || first.Offer_Name || ''
+    pages_count: (safe.pages || []).length,
+    offers_count: (safe.offers || []).length,
+    products_count: (safe.products || []).length,
+    messages_count: (safe.messages || []).length,
+    variants_count: (safe.variants || []).length,
+    healthgate_count: (safe.healthGate || []).length,
+    shipping_rules_count: (safe.shippingRules || []).length,
+    training_count: (safe.training || []).length
   };
 }
 
-export async function decideWithBrain({ messageText, state, context }) {
-  const text = normalizeText(messageText);
-  const intent = detectIntent(text);
-  const extracted_fields = extractBasicFields(text);
-  const recommended_offer = chooseOffer(context?.offers, text);
-
-  let handoff_required = false;
-  let handoff_reason = '';
-  let confidence = 0.72;
-  let detected_stage = state?.chat_stage || 'Opening';
-  let next_stage = detected_stage;
-  let reply_text = 'تمام يا فندم 👌 وصلتني رسالتك، وهنكمل معاك خطوة بخطوة لحد أنسب اختيار ليك.';
-
-  if (intent === 'greeting') {
-    reply_text = 'أهلاً بيك 👋 ابعتلي هدفك قد إيه كيلو وهنظبطلك أنسب عرض.';
-    next_stage = 'Opening';
-    confidence = 0.88;
-  }
-
-  if (intent === 'buy_intent' && recommended_offer) {
-    reply_text = `ممتاز 🙌 الأنسب مبدئيًا ليك هو ${recommended_offer.customer_offer_name}. لو تحب أكمل معاك التفاصيل والحجز.`;
-    next_stage = 'Recommendation';
-    confidence = 0.84;
-  }
-
-  if (intent === 'booking_data') {
-    next_stage = 'Booking';
-    reply_text = 'تمام جدًا ✅ ابعتلي الاسم + رقم الموبايل + المحافظة + العنوان بالتفصيل عشان نأكد الطلب.';
-    confidence = 0.82;
-  }
-
-  if (intent === 'request_human') {
-    handoff_required = true;
-    handoff_reason = 'Customer_Requested';
-    reply_text = 'حاضر ❤️ هحولك دلوقتي لحد من الفريق يكمل معاك.';
-    confidence = 0.95;
-  }
-
-  if (intent === 'sensitive_health') {
-    handoff_required = true;
-    handoff_reason = 'Sensitive_Health';
-    reply_text = 'سلامتك أهم حاجة عندنا ❤️ هحولك لزميل مختص يكمل معاك بشكل آمن.';
-    confidence = 0.94;
-    next_stage = 'Closed';
-  }
-
-  if (!text || text.length < 2) {
-    handoff_required = true;
-    handoff_reason = 'Low_Clarity';
-    reply_text = 'محتاج بس توضيح بسيط عشان أساعدك بدقة، وهحوّلك لحد من الفريق يكمل معاك.';
-    confidence = 0.4;
-  }
-
-  const merged = mergeExtractedFields(state?.collected_fields || {}, extracted_fields);
-
+function normalizeDecision(raw, fallback) {
   return {
-    reply_text,
-    intent,
-    detected_stage,
-    next_stage,
-    extracted_fields: merged,
-    recommended_offer,
-    handoff_required,
-    handoff_reason,
-    confidence,
-    notes: {
-      provider: 'mock_brain_v1',
-      used_tabs: Object.keys(context || {}),
-      message_length: text.length
+    reply_text: safeText(raw?.reply_text) || fallback.reply_text,
+    intent: safeText(raw?.intent) || fallback.intent,
+    detected_stage: safeText(raw?.detected_stage) || fallback.detected_stage,
+    next_stage: safeText(raw?.next_stage) || fallback.next_stage,
+    extracted_fields: raw?.extracted_fields || fallback.extracted_fields,
+    recommended_offer: raw?.recommended_offer || fallback.recommended_offer,
+    handoff_required: Boolean(raw?.handoff_required),
+    handoff_reason: safeText(raw?.handoff_reason),
+    confidence: Number(raw?.confidence ?? fallback.confidence),
+    notes: raw?.notes || fallback.notes
+  };
+}
+
+class MockBrainProvider {
+  constructor({ providerName = 'mock_provider_v2' } = {}) {
+    this.providerName = providerName;
+  }
+
+  async decide(payload) {
+    const messageText = safeText(payload?.message_text);
+    const previousFields = payload?.state?.collected_fields || {};
+    const extracted = extractBasicStateHints(messageText, previousFields);
+
+    const askHuman = /انسان|موظف|اكلم حد|human/i.test(messageText);
+    const looksSensitive = /عملية|نزيف|حامل|خطر|سكر|ضغط/i.test(messageText);
+
+    if (askHuman || looksSensitive || messageText.length < 2) {
+      return {
+        reply_text: 'حاضر ❤️ هحولك فورًا لحد من الفريق المختص يكمل معاك.',
+        intent: askHuman ? 'request_human' : 'sensitive_or_unclear',
+        detected_stage: payload?.state?.chat_stage || 'Opening',
+        next_stage: 'Closed',
+        extracted_fields: extracted,
+        recommended_offer: null,
+        handoff_required: true,
+        handoff_reason: askHuman ? 'Customer_Requested' : 'Sensitive_Or_Unclear',
+        confidence: 0.65,
+        notes: {
+          provider: this.providerName,
+          mock: true,
+          reason: 'safe_handoff_path'
+        }
+      };
     }
+
+    return {
+      reply_text: 'أهلاً بيك 👋 أنا معاك. قولي هدفك كام كيلو وعايز توصل لإيه، وأنا أرشحلك الأنسب.',
+      intent: 'ai_general',
+      detected_stage: payload?.state?.chat_stage || 'Opening',
+      next_stage: payload?.state?.chat_stage || 'Opening',
+      extracted_fields: extracted,
+      recommended_offer: null,
+      handoff_required: false,
+      handoff_reason: '',
+      confidence: 0.55,
+      notes: {
+        provider: this.providerName,
+        mock: true,
+        context_summary: buildContextSummary(payload?.business_context)
+      }
+    };
+  }
+}
+
+function buildBrainInput({ messageText, state, context }) {
+  return {
+    message_text: safeText(messageText),
+    state: {
+      chat_stage: state?.chat_stage || 'Opening',
+      collected_fields: state?.collected_fields || {},
+      is_new_chat: Boolean(state?.is_new_chat)
+    },
+    business_context: context || {}
   };
+}
+
+export async function decideWithBrain({ messageText, state, context, provider }) {
+  const fallback = {
+    reply_text: 'تمام يا فندم 🙏 وصلتني رسالتك.',
+    intent: 'fallback',
+    detected_stage: state?.chat_stage || 'Opening',
+    next_stage: state?.chat_stage || 'Opening',
+    extracted_fields: state?.collected_fields || {},
+    recommended_offer: null,
+    handoff_required: false,
+    handoff_reason: '',
+    confidence: 0.3,
+    notes: { provider: 'fallback', mock: true }
+  };
+
+  const activeProvider = provider || new MockBrainProvider();
+  const input = buildBrainInput({ messageText, state, context });
+
+  try {
+    const raw = await activeProvider.decide(input);
+    return normalizeDecision(raw, fallback);
+  } catch (error) {
+    return normalizeDecision({
+      ...fallback,
+      notes: {
+        ...fallback.notes,
+        error: error.message
+      }
+    }, fallback);
+  }
+}
+
+export function createMockBrainProvider() {
+  return new MockBrainProvider();
 }
