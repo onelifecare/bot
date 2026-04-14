@@ -72,12 +72,17 @@
   </div>
 
   <script>
-    const state = { selectedPageId: '' };
+    const state = { selectedPageId: '', token: window.localStorage.getItem('dashboardToken') || '' };
+
+    if (!state.token) {
+      state.token = window.prompt('Enter dashboard token');
+      if (state.token) window.localStorage.setItem('dashboardToken', state.token);
+    }
 
     async function postJson(url, payload) {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-dashboard-token': state.token || '' },
         body: JSON.stringify(payload)
       });
       return res.json();
@@ -135,7 +140,9 @@
 
     async function load() {
       const qs = state.selectedPageId ? `?pageId=${encodeURIComponent(state.selectedPageId)}` : '';
-      const res = await fetch(`/api/dashboard/bootstrap${qs}`);
+      const res = await fetch(`/api/dashboard/bootstrap${qs}`, {
+        headers: { 'x-dashboard-token': state.token || '' }
+      });
       const data = await res.json();
       if (!state.selectedPageId && data.selectedPage?.Page_ID) {
         state.selectedPageId = data.selectedPage.Page_ID;

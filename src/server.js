@@ -27,15 +27,27 @@ const sheetClient = new SheetClient({
 
 app.use('/public', express.static(path.join(__dirname, '..', 'public')));
 
+function requireDashboardToken(req, res, next) {
+  const token = req.get('x-dashboard-token');
+  if (!token || token !== config.dashboardAdminToken) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+  return next();
+}
+
+function normalizeEnum(value) {
+  return String(value || '').trim();
+}
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/dashboard', (_req, res) => {
+app.get('/dashboard', requireDashboardToken, (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'dashboard-live.html'));
 });
 
-app.get('/api/dashboard/bootstrap', async (req, res) => {
+app.get('/api/dashboard/bootstrap', requireDashboardToken, async (req, res) => {
   try {
     const pages = await sheetClient.listPages();
     const selectedPageId = req.query.pageId || pages[0]?.Page_ID || '';
@@ -75,30 +87,69 @@ app.get('/api/dashboard/bootstrap', async (req, res) => {
   }
 });
 
-app.post('/api/dashboard/page-ai', async (req, res) => {
+app.post('/api/dashboard/page-ai', requireDashboardToken, async (req, res) => {
   try {
     const { pageId, value } = req.body || {};
-    const ok = await sheetClient.updatePageAiByPageId(pageId, value);
+    const normalized = normalizeEnum(value).toUpperCase();
+    if (!['ON', 'OFF'].includes(normalized)) {
+      return res.status(400).json({ ok: false, error: 'value must be ON or OFF' });
+    }
+    const currentPage = await sheetClient.getPageById(pageId);
+    const ok = await sheetClient.updatePageAiByPageId(pageId, normalized);
+    await sheetClient.appendActionLog({
+      entity: 'dashboard',
+      action: 'dashboard_page_ai_toggle',
+      threadId: '',
+      oldValue: currentPage?.AI_Page || '',
+      meta: { pageId, newValue: normalized },
+      reason: 'dashboard action'
+    });
     res.json({ ok });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
 });
 
-app.post('/api/dashboard/bot-enabled', async (req, res) => {
+app.post('/api/dashboard/bot-enabled', requireDashboardToken, async (req, res) => {
   try {
     const { pageId, value, reason = '' } = req.body || {};
-    const ok = await sheetClient.updateBotEnabledByPageId(pageId, value, reason);
+    const normalized = normalizeEnum(value);
+    if (!['Yes', 'No'].includes(normalized)) {
+      return res.status(400).json({ ok: false, error: 'value must be Yes or No' });
+    }
+    const currentBot = await sheetClient.getBotControlByPageId(pageId);
+    const ok = await sheetClient.updateBotEnabledByPageId(pageId, normalized, reason);
+    await sheetClient.appendActionLog({
+      entity: 'dashboard',
+      action: 'dashboard_bot_enabled_toggle',
+      threadId: '',
+      oldValue: currentBot?.AI_Enabled || '',
+      meta: { pageId, newValue: normalized, reason },
+      reason: 'dashboard action'
+    });
     res.json({ ok });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
 });
 
-app.post('/api/dashboard/chat-ai', async (req, res) => {
+app.post('/api/dashboard/chat-ai', requireDashboardToken, async (req, res) => {
   try {
     const { pageId, threadId, value, reason = '' } = req.body || {};
-    const ok = await sheetClient.updateChatAiByThreadAndPage({ pageId, threadId, value, reason });
+    const normalized = normalizeEnum(value).toUpperCase();
+    if (!['ON', 'OFF'].includes(normalized)) {
+      return res.status(400).json({ ok: false, error: 'value must be ON or OFF' });
+    }
+    const currentChat = await sheetClient.getChatControlByThreadAndPage({ pageId, threadId });
+    const ok = await sheetClient.updateChatAiByThreadAndPage({ pageId, threadId, value: normalized, reason });
+    await sheetClient.appendActionLog({
+      entity: 'dashboard',
+      action: 'dashboard_chat_ai_toggle',
+      threadId,
+      oldValue: currentChat?.AI_Chat || '',
+      meta: { pageId, threadId, newValue: normalized, reason },
+      reason: 'dashboard action'
+    });
     res.json({ ok });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
