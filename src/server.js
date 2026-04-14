@@ -43,7 +43,7 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/dashboard', requireDashboardToken, (_req, res) => {
+app.get('/dashboard', (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'dashboard-live.html'));
 });
 
