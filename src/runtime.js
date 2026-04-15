@@ -117,40 +117,54 @@ export async function processIncomingText({ event, config, sheetClient }) {
           context: businessContext
   });
 
-  /* --- Handoff path --- */
-  if (brain.handoff_required) {
-          await sheetClient.appendHandoff({
-                    pageId,
-                    threadId,
-                    reason: brain.handoff_reason || 'AI_Handoff',
-                    reasonNote: `intent=${brain.intent}; confidence=${brain.confidence}`
-          });
+    /* --- Handoff path --- */
+        if (brain.handoff_required) {
+                  /* Extract customer info from collected fields when available */
+                  const customerName = collectedFields.customer_name || collectedFields.name || '';
+                  const phone1 = collectedFields.phone || collectedFields.phone_1 || '';
 
-        await sheetClient.updateChatAiByThreadAndPage({
-                  pageId,
-                  threadId,
-                  value: 'OFF',
-                  reason: brain.handoff_reason || 'AI_Handoff'
-        });
+                  await sheetClient.appendHandoff({
+                              pageId,
+                              threadId,
+                              reason: brain.handoff_reason || 'AI_Handoff',
+                              reasonNote: `intent=${brain.intent}; confidence=${brain.confidence}`,
+                              customerName,
+                              phone1
+                  });
 
-        const handoffText = brain.reply_text || config.greetingText;
-          await sendTextMessage({
-                    pageAccessToken: page.Page_Access_Token,
-                    recipientPsid: threadId,
-                    text: handoffText
-          });
+                  /* Turn AI off and record reason (existing behavior) */
+                  await sheetClient.updateChatAiByThreadAndPage({
+                              pageId,
+                              threadId,
+                              value: 'OFF',
+                              reason: brain.handoff_reason || 'AI_Handoff'
+                  });
 
-        await sheetClient.appendActionLog({
-                  entity: 'runtime',
-                  action: 'brain_handoff',
-                  pageId,
-                  threadId,
-                  reason: brain.handoff_reason || 'AI_Handoff',
-                  meta: { intent: brain.intent, confidence: brain.confidence }
-        });
+                  /* Update ChatControl runtime fields: Last_Action + Last_Updated_At */
+                  await sheetClient.updateRowInTab({
+                              tabName: sheetClient.tabs.chatControl,
+                              match: (r) => String(r.Page_ID) === String(pageId) && String(r.Thread_ID) === String(threadId),
+                              updates: { Last_Action: 'handoff', Last_Updated_At: nowIso() }
+                  });
 
-        return { stopped: false, isNewChat, handoff: true, intent: brain.intent };
-  }
+                  const handoffText = brain.reply_text || config.greetingText;
+                  await sendTextMessage({
+                              pageAccessToken: page.Page_Access_Token,
+                              recipientPsid: threadId,
+                              text: handoffText
+                  });
+
+                  await sheetClient.appendActionLog({
+                              entity: 'runtime',
+                              action: 'brain_handoff',
+                              pageId,
+                              threadId,
+                              reason: brain.handoff_reason || 'AI_Handoff',
+                              meta: { intent: brain.intent, confidence: brain.confidence }
+                  });
+
+                  return { stopped: false, isNewChat, handoff: true, intent: brain.intent };
+        }
 
   /* --- Normal AI reply path --- */
   const replyText = brain.reply_text || config.greetingText;
