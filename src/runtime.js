@@ -31,7 +31,7 @@ function parseJsonSafe(text, fallback) {
       catch { return fallback; }
 }
 
-export async function processIncomingText({ event, config, sheetClient }) {
+export async function processIncomingText({ event, config, sheetClient, brainProvider }) {
       const pageId = event.pageId;
       const threadId = event.senderPsid;
 
@@ -114,7 +114,8 @@ export async function processIncomingText({ event, config, sheetClient }) {
                     collected_fields: collectedFields,
                     is_new_chat: isNewChat
           },
-          context: businessContext
+          context: businessContext,
+            provider: brainProvider
   });
 
     /* --- Handoff path --- */

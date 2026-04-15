@@ -5,6 +5,7 @@ import { config } from './config.js';
 import { isValidSignature } from './messenger.js';
 import { SheetClient } from './sheets.js';
 import { processIncomingText } from './runtime.js';
+import { createBrainProvider } from './llm-provider.js';
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -24,6 +25,9 @@ const sheetClient = new SheetClient({
   serviceAccountPrivateKey: config.serviceAccountPrivateKey,
   tabs: config.sheets
 });
+
+/* --- Initialize brain provider once at startup --- */
+const brainProvider = createBrainProvider(config);
 
 app.use('/public', express.static(path.join(__dirname, '..', 'public')));
 
@@ -193,7 +197,7 @@ app.post(config.webhookPath, async (req, res) => {
 
   setImmediate(async () => {
     try {
-      await processIncomingText({ event, config, sheetClient });
+      await processIncomingText({ event, config, sheetClient, brainProvider });
     } catch (error) {
       console.error('Phase1 processing error:', error.message);
       await sheetClient.appendActionLog({
