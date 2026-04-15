@@ -26,4 +26,11 @@ export const config = {
     actionLog: process.env.SHEET_ACTION_LOG_TAB || 'Audit'
   },
   greetingText: process.env.STATIC_GREETING_AR || 'أهلاً بيك 👋 أنا معاك من فريق One Life Care، تحت أمرك.'
+
+    /* --- AI / LLM provider --- */
+    brainProvider: (process.env.BRAIN_PROVIDER || 'mock').toLowerCase().trim(),
+    openaiApiKey: process.env.OPENAI_API_KEY || '',
+    aiModel: process.env.AI_MODEL || 'gpt-4o-mini',
+    aiSystemPrompt: process.env.AI_SYSTEM_PROMPT || '',
+    aiApiUrl: process.env.AI_API_URL || '',
 };
