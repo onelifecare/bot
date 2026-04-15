@@ -195,27 +195,35 @@ export class SheetClient {
         });
   }
 
-  /* --- Phase 2: handoff row append (minimal addition) --- */
-  async appendHandoff({ pageId, threadId, reason, reasonNote = '' }) {
-        const tabName = this.tabs.handoffs || 'Handoffs';
-        const values = [[
-                '',
-                new Date().toISOString(),
-                pageId,
-                threadId,
-                reason,
-                reasonNote,
-                'Open'
-              ]];
+      /* --- Phase 2: handoff row append (fixed 13-column mapping) --- */
+        async appendHandoff({ pageId, threadId, reason, reasonNote = '', customerName = '', phone1 = '' }) {
+                    const tabName = this.tabs.handoffs || 'Handoffs';
+                    const handoffId = `HO-${Date.now()}`;
+                    const now = new Date().toISOString();
+                    const values = [[
+                                    handoffId,          // A  Handoff_ID
+                                    now,                // B  Created_At
+                                    pageId,             // C  Page_ID
+                                    threadId,           // D  Thread_ID
+                                    customerName,       // E  Customer_Name
+                                    phone1,             // F  Phone_1
+                                    reason,             // G  Reason_Type
+                                    reasonNote,         // H  Reason_Note
+                                    'Waiting_Human',    // I  Chat_Status
+                                    '',                 // J  Assigned_To
+                                    'No',               // K  Handled
+                                    '',                 // L  Resolved_At
+                                    ''                  // M  Resolution_Note
+                                ]];
 
-      await this.sheets.spreadsheets.values.append({
-              spreadsheetId: this.sheetId,
-              range: `${tabName}!A:G`,
-              valueInputOption: 'USER_ENTERED',
-              insertDataOption: 'INSERT_ROWS',
-              requestBody: { values }
-      });
-  }
+                    await this.sheets.spreadsheets.values.append({
+                                    spreadsheetId: this.sheetId,
+                                    range: `${tabName}!A:M`,
+                                    valueInputOption: 'USER_ENTERED',
+                                    insertDataOption: 'INSERT_ROWS',
+                                    requestBody: { values }
+                    });
+        }
 }
 
 function columnLabel(index1Based) {
