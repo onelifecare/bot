@@ -10,6 +10,18 @@ function safeText(value) {
     return String(value || '').trim();
 }
 
+function normalizeArabic(value) {
+    return String(value || '')
+        .replace(/[\u0623\u0625\u0622]/g, '\u0627') // أ/إ/آ → ا
+        .replace(/\u0649/g, '\u064A')               // ى → ي
+        .replace(/\u0629/g, '\u0647')               // ة → ه
+        .replace(/\u0640/g, '')                     // tatweel ـ
+        .replace(/[\u064B-\u0652]/g, '')            // tashkeel
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
 function extractBasicHints(text, previousFields) {
     const hints = { ...(previousFields || {}) };
     const phone = text.match(/(?:\+?2)?01[0-2,5]{1}[0-9]{8}/);
@@ -41,16 +53,19 @@ class MockBrainProvider {
 
   async decide(payload) {
         const text = safeText(payload?.message_text);
+        const normalized = normalizeArabic(text);
         const prev = payload?.state?.collected_fields || {};
         const extracted = extractBasicHints(text, prev);
         const stage = payload?.state?.chat_stage || 'Opening';
 
-      const wantsHuman = /انسان|موظف|اكلم حد|human/i.test(text);
-        const sensitive = /عملية|نزيف|حامل|خطر|سكر|ضغط/i.test(text);
+      const wantsHuman = /انسان|موظف|اكلم|اتكلم|فريق|الدعم|ممثل|human|agent/i.test(normalized);
+        const sensitive = /عمليه|نزيف|حامل|خطر|سكر|ضغط/i.test(normalized);
+        const wantsOffers = /عرض|عروض|باقه|باقات|سعر|اسعار|اشتراك|تكلفه|كام/i.test(normalized);
+        const wantsFollowup = /تفاصيل|اكتر|كمان|زياده|توضيح|ايضاح|فهمت|اشرح/i.test(normalized);
 
       if (wantsHuman || sensitive || text.length < 2) {
               return {
-                        reply_text: 'حاضر هحولك لحد من الفريق يكمل معاك.',
+                        reply_text: 'حاضر، هحوّلك دلوقتي لحد من الفريق يكمل معاك.',
                         intent: wantsHuman ? 'request_human' : 'sensitive_or_unclear',
                         detected_stage: stage,
                         next_stage: 'Closed',
@@ -58,7 +73,37 @@ class MockBrainProvider {
                         recommended_offer: null,
                         handoff_required: true,
                         handoff_reason: wantsHuman ? 'Customer_Requested' : 'Sensitive_Or_Unclear',
-                        confidence: 0.65,
+                        confidence: 0.7,
+                        notes: { provider: this.providerName, mock: true }
+              };
+      }
+
+      if (wantsOffers) {
+              return {
+                        reply_text: 'عندنا عروض وباقات مناسبة حسب احتياجك. ممكن تقولي الخدمة اللي تهمّك والمنطقة ورقم موبايلك عشان أبعتلك التفاصيل المناسبة؟',
+                        intent: 'offers_inquiry',
+                        detected_stage: stage,
+                        next_stage: stage,
+                        extracted_fields: extracted,
+                        recommended_offer: null,
+                        handoff_required: false,
+                        handoff_reason: '',
+                        confidence: 0.6,
+                        notes: { provider: this.providerName, mock: true }
+              };
+      }
+
+      if (wantsFollowup) {
+              return {
+                        reply_text: 'أكيد، حابب تعرف تفاصيل عن إيه بالظبط — الأسعار، المواعيد، ولا طريقة الحجز؟',
+                        intent: 'followup_clarify',
+                        detected_stage: stage,
+                        next_stage: stage,
+                        extracted_fields: extracted,
+                        recommended_offer: null,
+                        handoff_required: false,
+                        handoff_reason: '',
+                        confidence: 0.55,
                         notes: { provider: this.providerName, mock: true }
               };
       }
