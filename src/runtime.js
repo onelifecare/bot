@@ -1,6 +1,41 @@
 import { sendTextMessage } from './messenger.js';
 import { decideWithBrain } from './brain.js';
 
+/*
+ * Stage transition table — verbatim from the LLM prompt at
+ * src/llm-provider.js:56-63. Do not add or invent new transitions here;
+ * this file is a runtime enforcer of the prompt's declared rules.
+ */
+const ALLOWED_NEXT_STAGES = {
+      Opening:        ['Opening', 'Diagnosis', 'Objection', 'Closed'],
+      Diagnosis:      ['Diagnosis', 'Recommendation', 'Objection', 'Closed'],
+      Recommendation: ['Recommendation', 'Objection', 'Booking', 'Diagnosis', 'Closed'],
+      Objection:      ['Opening', 'Diagnosis', 'Recommendation', 'Booking', 'Closed'],
+      Booking:        ['Booking', 'PostSend', 'Objection', 'Closed'],
+      PostSend:       ['PostSend', 'Closed'],
+      Closed:         ['Closed']
+};
+
+function enforceStageTransition(currentStage, proposedNextStage, handoffRequired) {
+      const from = ALLOWED_NEXT_STAGES[currentStage] ? currentStage : 'Opening';
+      const to = String(proposedNextStage || '').trim();
+
+      if (handoffRequired) {
+            return { stage: 'Closed', rejected: false, from, to };
+      }
+
+      if (!to) {
+            return { stage: from, rejected: true, reason: 'empty_next_stage', from, to };
+      }
+
+      const allowed = ALLOWED_NEXT_STAGES[from] || [];
+      if (allowed.includes(to)) {
+            return { stage: to, rejected: false, from, to };
+      }
+
+      return { stage: from, rejected: true, reason: 'transition_not_allowed', from, to };
+}
+
 function nowIso() {
       return new Date().toISOString();
 }
@@ -187,10 +222,27 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
           text: replyText
   });
 
+  const guard = enforceStageTransition(
+          chatRow.Chat_Stage || 'Opening',
+          brain.next_stage,
+          brain.handoff_required
+  );
+
+  if (guard.rejected) {
+          await sheetClient.appendActionLog({
+                    entity: 'runtime',
+                    action: 'stage_guard_reject',
+                    pageId,
+                    threadId,
+                    reason: guard.reason,
+                    meta: { from: guard.from, to: guard.to, intent: brain.intent }
+          });
+  }
+
   await sheetClient.upsertChatControl({
           row: {
                     ...chatRow,
-                    Chat_Stage: brain.next_stage || chatRow.Chat_Stage || 'Opening',
+                    Chat_Stage: guard.stage,
                     Collected_Fields_JSON: JSON.stringify(brain.extracted_fields || {}),
                     Last_Action: 'ai_reply_sent',
                     Last_Updated_At: nowIso()
@@ -204,7 +256,9 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
           threadId,
           meta: {
                     intent: brain.intent,
-                    next_stage: brain.next_stage,
+                    next_stage: guard.stage,
+                    proposed_stage: brain.next_stage,
+                    stage_guard_rejected: guard.rejected,
                     confidence: brain.confidence,
                     handoff_required: brain.handoff_required
           }
@@ -215,7 +269,7 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
           isNewChat,
           replied: true,
           intent: brain.intent,
-          nextStage: brain.next_stage,
+          nextStage: guard.stage,
           confidence: brain.confidence
   };
 }
