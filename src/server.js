@@ -191,18 +191,40 @@ app.post(config.webhookPath, async (req, res) => {
     return res.sendStatus(403);
   }
 
-  const messaging = req.body?.entry?.[0]?.messaging?.[0];
-  const text = messaging?.message?.text;
+  const entries = req.body?.entry || [];
+  const textEvents = [];
+  const skippedTypes = [];
 
-  if (!messaging || typeof text !== 'string' || !text.trim()) {
-    console.log('[webhook] payload_skipped (no message.text)');
+  for (const entry of entries) {
+    const pageId = entry.id || '';
+    const messagingItems = entry.messaging || [];
+    for (const item of messagingItems) {
+      const text = item?.message?.text;
+      if (typeof text === 'string' && text.trim()) {
+        if (item.message.is_echo) {
+          skippedTypes.push('echo');
+          console.log(`[webhook] item_skipped: echo (page=${pageId})`);
+          continue;
+        }
+        textEvents.push({ pageId, senderPsid: item.sender.id, text: text.trim(), timestamp: item.timestamp });
+      } else {
+        const kind = item.delivery ? 'delivery' : item.read ? 'read' : item.postback ? 'postback' : item.message?.attachments ? 'attachment' : item.message?.is_echo ? 'echo' : 'unknown';
+        skippedTypes.push(kind);
+        console.log(`[webhook] item_skipped: ${kind} (page=${pageId}, sender=${item?.sender?.id || ''})`);
+      }
+    }
+  }
+
+  if (textEvents.length === 0) {
+    const summary = skippedTypes.length > 0 ? skippedTypes.join(', ') : 'empty payload';
+    console.log(`[webhook] payload_skipped: no text messages (items: ${summary})`);
     try {
       await sheetClient.appendActionLog({
         entity: 'webhook',
         action: 'payload_skipped',
-        pageId: req.body?.entry?.[0]?.id || '',
-        threadId: messaging?.sender?.id || '',
-        reason: 'no message.text'
+        pageId: entries[0]?.id || '',
+        threadId: '',
+        reason: `no text messages; skipped: ${summary}`
       });
     } catch (auditError) {
       console.error('[webhook] failed to write payload_skipped audit:', auditError.message);
@@ -210,33 +232,29 @@ app.post(config.webhookPath, async (req, res) => {
     return res.status(200).json({ ok: true, skipped: true });
   }
 
-  const event = {
-    pageId: req.body.entry[0].id,
-    senderPsid: messaging.sender.id,
-    text: text.trim(),
-    timestamp: messaging.timestamp
-  };
-
+  console.log(`[webhook] dispatching ${textEvents.length} text message(s), skipped ${skippedTypes.length} item(s)`);
   res.status(200).json({ ok: true });
 
-  setImmediate(async () => {
-    try {
-      await processIncomingText({ event, config, sheetClient, brainProvider });
-    } catch (error) {
-      console.error('Phase1 processing error:', error.message);
+  for (const event of textEvents) {
+    setImmediate(async () => {
       try {
-        await sheetClient.appendActionLog({
-          entity: 'runtime',
-          action: 'error',
-          pageId: event.pageId,
-          threadId: event.senderPsid,
-          reason: error.message
-        });
-      } catch (auditError) {
-        console.error('Phase1 audit write failed:', auditError.message);
+        await processIncomingText({ event, config, sheetClient, brainProvider });
+      } catch (error) {
+        console.error('Phase1 processing error:', error.message);
+        try {
+          await sheetClient.appendActionLog({
+            entity: 'runtime',
+            action: 'error',
+            pageId: event.pageId,
+            threadId: event.senderPsid,
+            reason: error.message
+          });
+        } catch (auditError) {
+          console.error('Phase1 audit write failed:', auditError.message);
+        }
       }
-    }
-  });
+    });
+  }
 
   return undefined;
 });
