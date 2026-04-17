@@ -23,7 +23,8 @@ export const config = {
     pages: process.env.SHEET_PAGES_TAB || 'Pages',
     botControl: process.env.SHEET_BOTCONTROL_TAB || 'BotControl',
     chatControl: process.env.SHEET_CHATCONTROL_TAB || 'ChatControl',
-    actionLog: process.env.SHEET_ACTION_LOG_TAB || 'Audit'
+    actionLog: process.env.SHEET_ACTION_LOG_TAB || 'Audit',
+    handoffs: process.env.SHEET_HANDOFFS_TAB || 'Handoffs'
   },
   greetingText: process.env.STATIC_GREETING_AR || 'أهلاً بيك 👋 أنا معاك من فريق One Life Care، تحت أمرك.',
 

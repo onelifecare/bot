@@ -173,9 +173,21 @@ app.get(config.webhookPath, (req, res) => {
 });
 
 app.post(config.webhookPath, async (req, res) => {
+  console.log('[webhook] POST received');
   const signature = req.get('X-Hub-Signature-256');
 
   if (!isValidSignature({ appSecret: config.appSecret, signatureHeader: signature, rawBody: req.rawBody || Buffer.from('') })) {
+    console.warn('[webhook] signature_rejected');
+    try {
+      await sheetClient.appendActionLog({
+        entity: 'webhook',
+        action: 'signature_rejected',
+        threadId: '',
+        reason: 'X-Hub-Signature-256 mismatch'
+      });
+    } catch (auditError) {
+      console.error('[webhook] failed to write signature_rejected audit:', auditError.message);
+    }
     return res.sendStatus(403);
   }
 
@@ -183,6 +195,18 @@ app.post(config.webhookPath, async (req, res) => {
   const text = messaging?.message?.text;
 
   if (!messaging || typeof text !== 'string' || !text.trim()) {
+    console.log('[webhook] payload_skipped (no message.text)');
+    try {
+      await sheetClient.appendActionLog({
+        entity: 'webhook',
+        action: 'payload_skipped',
+        pageId: req.body?.entry?.[0]?.id || '',
+        threadId: messaging?.sender?.id || '',
+        reason: 'no message.text'
+      });
+    } catch (auditError) {
+      console.error('[webhook] failed to write payload_skipped audit:', auditError.message);
+    }
     return res.status(200).json({ ok: true, skipped: true });
   }
 
@@ -200,13 +224,17 @@ app.post(config.webhookPath, async (req, res) => {
       await processIncomingText({ event, config, sheetClient, brainProvider });
     } catch (error) {
       console.error('Phase1 processing error:', error.message);
-      await sheetClient.appendActionLog({
-        entity: 'runtime',
-        action: 'error',
-        pageId: event.pageId,
-        threadId: event.senderPsid,
-        reason: error.message
-      });
+      try {
+        await sheetClient.appendActionLog({
+          entity: 'runtime',
+          action: 'error',
+          pageId: event.pageId,
+          threadId: event.senderPsid,
+          reason: error.message
+        });
+      } catch (auditError) {
+        console.error('Phase1 audit write failed:', auditError.message);
+      }
     }
   });
 
