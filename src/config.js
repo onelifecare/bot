@@ -27,10 +27,19 @@ export const config = {
   },
   greetingText: process.env.STATIC_GREETING_AR || 'أهلاً بيك 👋 أنا معاك من فريق One Life Care، تحت أمرك.',
 
-    /* --- AI / LLM provider --- */
+    /* --- AI / LLM provider ---
+     * Strategic direction: Gemini. OpenAI-related vars are retained as a legacy
+     * compatibility layer and should not be relied on for new setups.
+     */
     brainProvider: (process.env.BRAIN_PROVIDER || 'mock').toLowerCase().trim(),
+    aiSystemPrompt: process.env.AI_SYSTEM_PROMPT || '',
+
+    /* Gemini (intended provider path) */
+    geminiApiKey: process.env.GEMINI_API_KEY || '',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+
+    /* OpenAI (legacy compatibility layer) */
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     aiModel: process.env.AI_MODEL || 'gpt-4o-mini',
-    aiSystemPrompt: process.env.AI_SYSTEM_PROMPT || '',
     aiApiUrl: process.env.AI_API_URL || '',
 };
