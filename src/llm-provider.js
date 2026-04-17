@@ -136,9 +136,12 @@ class LlmBrainProvider {
 /* ---------- Gemini JSON sanitization ---------- */
 
 function sanitizeGeminiJson(raw) {
-    let text = raw.trim();
+    let text = String(raw || '');
+    text = text.replace(/^\uFEFF/, '').replace(/[\u200B-\u200D\u2060]/g, '');
+    text = text.trim();
     text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
     text = text.trim();
+    text = text.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
     const firstBrace = text.indexOf('{');
     const lastBrace = text.lastIndexOf('}');
     if (firstBrace >= 0 && lastBrace > firstBrace) {

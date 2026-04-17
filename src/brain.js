@@ -29,18 +29,40 @@ function extractBasicHints(text, previousFields) {
     return hints;
 }
 
+function coerceObjectField(value) {
+    if (value == null) return null;
+    if (typeof value === 'object' && !Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        try {
+            const parsed = JSON.parse(trimmed);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+        } catch {
+            return null;
+        }
+    }
+    return null;
+}
+
+function coerceOfferField(value) {
+    if (value == null) return null;
+    if (typeof value === 'string') return value;
+    try { return JSON.stringify(value); } catch { return String(value); }
+}
+
 function normalizeDecision(raw, fallback) {
     return {
           reply_text: safeText(raw?.reply_text) || fallback.reply_text,
           intent: safeText(raw?.intent) || fallback.intent,
           detected_stage: safeText(raw?.detected_stage) || fallback.detected_stage,
           next_stage: safeText(raw?.next_stage) || fallback.next_stage,
-          extracted_fields: raw?.extracted_fields || fallback.extracted_fields,
-          recommended_offer: raw?.recommended_offer ?? fallback.recommended_offer,
+          extracted_fields: coerceObjectField(raw?.extracted_fields) || fallback.extracted_fields,
+          recommended_offer: raw?.recommended_offer === undefined ? fallback.recommended_offer : coerceOfferField(raw?.recommended_offer),
           handoff_required: Boolean(raw?.handoff_required),
           handoff_reason: safeText(raw?.handoff_reason),
           confidence: Number(raw?.confidence ?? fallback.confidence),
-          notes: raw?.notes || fallback.notes
+          notes: raw?.notes ?? fallback.notes
     };
 }
 
