@@ -3,15 +3,20 @@ import axios from 'axios';
 /**
  * LLM Brain Provider (Phase 2 — real AI provider)
  *
- * Provider-agnostic implementation that talks to any OpenAI-compatible
- * Chat Completions API (OpenAI, Azure OpenAI, local proxies, etc.).
+ * Primary intended path: Gemini (GeminiBrainProvider).
+ * Temporary legacy path: OpenAI-compatible Chat Completions (LlmBrainProvider).
  *
  * Contract: { async decide(payload) => BrainDecision }
  * Same interface expected by decideWithBrain() in brain.js.
  */
 
+/* OpenAI legacy defaults */
 const DEFAULT_API_URL = 'https://api.openai.com/v1/chat/completions';
 const DEFAULT_MODEL = 'gpt-4o-mini';
+
+/* Gemini defaults */
+const DEFAULT_GEMINI_MODEL = 'gemini-1.5-flash';
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /* ---------- System prompt ---------- */
 
@@ -128,14 +133,67 @@ class LlmBrainProvider {
   }
 }
 
+/* ---------- Gemini Provider class ---------- */
+
+class GeminiBrainProvider {
+    /**
+     * @param {object} opts
+     * @param {string} opts.apiKey       — Google Generative Language API key
+     * @param {string} [opts.model]      — Gemini model (default: gemini-1.5-flash)
+     * @param {string} [opts.systemPrompt] — optional system prompt override
+     */
+  constructor({ apiKey, model, systemPrompt }) {
+        this.providerName = 'gemini';
+        this.apiKey = apiKey;
+        this.model = model || DEFAULT_GEMINI_MODEL;
+        this.systemPrompt = buildSystemPrompt(systemPrompt);
+  }
+
+  async decide(payload) {
+        const userMessage = buildUserMessage(payload);
+        const url = `${GEMINI_BASE_URL}/${encodeURIComponent(this.model)}:generateContent`;
+
+      const response = await axios.post(
+              url,
+              {
+                        systemInstruction: { parts: [{ text: this.systemPrompt }] },
+                        contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+                        generationConfig: {
+                                    temperature: 0.3,
+                                    maxOutputTokens: 800,
+                                    responseMimeType: 'application/json'
+                        }
+              },
+              {
+                        headers: {
+                                    'Content-Type': 'application/json',
+                                    'x-goog-api-key': this.apiKey
+                        },
+                        timeout: 15000
+              }
+      );
+
+      const parts = response.data?.candidates?.[0]?.content?.parts;
+        const content = Array.isArray(parts) ? parts.map((p) => p?.text || '').join('').trim() : '';
+        if (!content) {
+                throw new Error('Gemini returned empty content');
+        }
+
+      return JSON.parse(content);
+  }
+}
+
 /* ---------- Factory (called once at startup) ---------- */
 
 /**
  * Creates the appropriate brain provider based on config.
- * Returns LlmBrainProvider if configured, or null to let brain.js fall back to Mock.
+ * Returns a provider instance if configured, or null to let brain.js fall back to Mock.
+ *
+ * Strategic direction: Gemini.
+ * OpenAI path is kept as a temporary legacy compatibility layer.
  *
  * @param {object} cfg — config object from config.js
- * @returns {LlmBrainProvider|null}
+ * @returns {GeminiBrainProvider|LlmBrainProvider|null}
  */
 export function createBrainProvider(cfg) {
     const providerType = (cfg.brainProvider || 'mock').toLowerCase().trim();
@@ -143,6 +201,22 @@ export function createBrainProvider(cfg) {
   if (providerType === 'mock') {
         console.log('[llm-provider] BRAIN_PROVIDER=mock — using MockBrainProvider fallback');
         return null;
+  }
+
+  if (providerType === 'gemini') {
+        if (!cfg.geminiApiKey) {
+                console.warn('[llm-provider] BRAIN_PROVIDER=gemini but GEMINI_API_KEY is missing — falling back to Mock');
+                return null;
+        }
+
+      const provider = new GeminiBrainProvider({
+              apiKey: cfg.geminiApiKey,
+              model: cfg.geminiModel,
+              systemPrompt: cfg.aiSystemPrompt
+      });
+
+      console.log(`[llm-provider] Gemini provider initialized: model=${provider.model}`);
+        return provider;
   }
 
   if (providerType === 'openai') {
@@ -158,7 +232,8 @@ export function createBrainProvider(cfg) {
               apiUrl: cfg.aiApiUrl,
       });
 
-      console.log(`[llm-provider] Real LLM provider initialized: model=${provider.model}`);
+      console.warn('[llm-provider] BRAIN_PROVIDER=openai is legacy; strategic direction is Gemini');
+        console.log(`[llm-provider] OpenAI (legacy) provider initialized: model=${provider.model}`);
         return provider;
   }
 
