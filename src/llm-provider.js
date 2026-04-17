@@ -141,7 +141,6 @@ function sanitizeGeminiJson(raw) {
     text = text.trim();
     text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
     text = text.trim();
-    text = text.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
     const firstBrace = text.indexOf('{');
     const lastBrace = text.lastIndexOf('}');
     if (firstBrace >= 0 && lastBrace > firstBrace) {
@@ -157,6 +156,40 @@ function sanitizeGeminiJson(raw) {
         });
     });
     return text;
+}
+
+function repairUnescapedQuotes(text) {
+    const result = [];
+    let i = 0;
+    const len = text.length;
+    while (i < len) {
+        if (text[i] !== '"') { result.push(text[i]); i++; continue; }
+        result.push('"');
+        i++;
+        while (i < len) {
+            if (text[i] === '\\' && i + 1 < len) {
+                result.push(text[i], text[i + 1]);
+                i += 2;
+                continue;
+            }
+            if (text[i] === '"') {
+                let j = i + 1;
+                while (j < len && (text[j] === ' ' || text[j] === '\t' || text[j] === '\n' || text[j] === '\r')) j++;
+                const next = j < len ? text[j] : '';
+                if (next === ':' || next === ',' || next === '}' || next === ']' || next === '') {
+                    result.push('"');
+                    i++;
+                    break;
+                }
+                result.push('\\"');
+                i++;
+                continue;
+            }
+            result.push(text[i]);
+            i++;
+        }
+    }
+    return result.join('');
 }
 
 /* ---------- Gemini Provider class ---------- */
@@ -227,11 +260,21 @@ class GeminiBrainProvider {
         const sanitized = sanitizeGeminiJson(content);
         try {
           const parsed = JSON.parse(sanitized);
-          console.log('[gemini] parse_repaired_success');
+          console.log('[gemini] parse_repaired_success strategy=sanitize');
           return parsed;
-        } catch (parseErr) {
-          console.error(`[gemini] parse_failed error=${parseErr.message} raw=${content.slice(0, 500)}`);
-          throw parseErr;
+        } catch (_secondErr) {
+          const repaired = repairUnescapedQuotes(sanitized);
+          try {
+            const parsed = JSON.parse(repaired);
+            console.log('[gemini] parse_repaired_success strategy=quote_repair');
+            return parsed;
+          } catch (parseErr) {
+            const opens = (sanitized.match(/{/g) || []).length;
+            const closes = (sanitized.match(/}/g) || []).length;
+            const hint = opens > closes ? 'likely_truncated' : 'malformed_content';
+            console.error(`[gemini] parse_failed error=${parseErr.message} hint=${hint} len=${content.length} raw_start=${content.slice(0, 300)} raw_end=${content.slice(-200)}`);
+            throw parseErr;
+          }
         }
       }
   }
