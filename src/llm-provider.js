@@ -133,6 +133,29 @@ class LlmBrainProvider {
   }
 }
 
+/* ---------- Gemini JSON sanitization ---------- */
+
+function sanitizeGeminiJson(raw) {
+    let text = raw.trim();
+    text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+    text = text.trim();
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+        text = text.slice(firstBrace, lastBrace + 1);
+    }
+    text = text.replace(/,\s*([}\]])/g, '$1');
+    text = text.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+        return match.replace(/[\x00-\x1f]/g, (ch) => {
+            if (ch === '\n') return '\\n';
+            if (ch === '\r') return '';
+            if (ch === '\t') return '\\t';
+            return '';
+        });
+    });
+    return text;
+}
+
 /* ---------- Gemini Provider class ---------- */
 
 class GeminiBrainProvider {
@@ -197,9 +220,16 @@ class GeminiBrainProvider {
 
       try {
         return JSON.parse(content);
-      } catch (parseErr) {
-        console.error(`[gemini] parse_failed error=${parseErr.message} raw=${content.slice(0, 500)}`);
-        throw parseErr;
+      } catch (_firstErr) {
+        const sanitized = sanitizeGeminiJson(content);
+        try {
+          const parsed = JSON.parse(sanitized);
+          console.log('[gemini] parse_repaired_success');
+          return parsed;
+        } catch (parseErr) {
+          console.error(`[gemini] parse_failed error=${parseErr.message} raw=${content.slice(0, 500)}`);
+          throw parseErr;
+        }
       }
   }
 }
