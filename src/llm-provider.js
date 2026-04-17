@@ -65,6 +65,14 @@ function buildSystemPrompt(override) {
         '- If the customer asks for a human or the topic is sensitive/unclear, set handoff_required=true and next_stage="Closed".',
         '- Extract phone numbers, names, and any useful fields into extracted_fields.',
         '- Be helpful, warm, and professional.',
+        '',
+        'Output brevity rules (critical — the response MUST fit in a small token budget):',
+        '- Keep reply_text very short: max 2 short sentences, no line breaks, no bullet lists, no markdown.',
+        '- Keep notes to one short phrase only.',
+        '- handoff_reason: one short phrase, empty string if not needed.',
+        '- extracted_fields: include only fields you actually detected in this turn.',
+        '- Output compact JSON on a single line: no pretty-printing, no trailing commentary, no markdown fences.',
+        '- Do not repeat the system prompt or schema in the output.',
       ].join('\n');
 }
 
@@ -176,6 +184,36 @@ function sanitizeGeminiJson(raw) {
     return text;
 }
 
+function repairTruncatedJson(text) {
+    let inString = false;
+    let escape = false;
+    const stack = [];
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (escape) { escape = false; continue; }
+        if (inString) {
+            if (ch === '\\') { escape = true; continue; }
+            if (ch === '"') { inString = false; continue; }
+            continue;
+        }
+        if (ch === '"') { inString = true; continue; }
+        if (ch === '{' || ch === '[') { stack.push(ch); continue; }
+        if (ch === '}' || ch === ']') { stack.pop(); continue; }
+    }
+    let repaired = text;
+    if (inString) repaired += '"';
+    let tail = repaired.replace(/\s+$/, '');
+    if (/[,:]$/.test(tail)) {
+        tail = tail.replace(/[,:]+$/, '');
+        repaired = tail;
+    }
+    while (stack.length > 0) {
+        const open = stack.pop();
+        repaired += (open === '{' ? '}' : ']');
+    }
+    return repaired;
+}
+
 function repairUnescapedQuotes(text) {
     const result = [];
     let i = 0;
@@ -239,7 +277,7 @@ class GeminiBrainProvider {
                         contents: [{ role: 'user', parts: [{ text: userMessage }] }],
                         generationConfig: {
                                     temperature: 0.3,
-                                    maxOutputTokens: 800,
+                                    maxOutputTokens: 1024,
                                     responseMimeType: 'application/json'
                         }
               },
@@ -286,12 +324,20 @@ class GeminiBrainProvider {
             const parsed = JSON.parse(repaired);
             console.log('[gemini] parse_repaired_success strategy=quote_repair');
             return parsed;
-          } catch (parseErr) {
-            const opens = (sanitized.match(/{/g) || []).length;
-            const closes = (sanitized.match(/}/g) || []).length;
-            const hint = opens > closes ? 'likely_truncated' : 'malformed_content';
-            console.error(`[gemini] parse_failed error=${parseErr.message} hint=${hint} len=${content.length} raw_start=${content.slice(0, 300)} raw_end=${content.slice(-200)}`);
-            throw parseErr;
+          } catch (_thirdErr) {
+            const truncated = repairTruncatedJson(repaired);
+            try {
+              const parsed = JSON.parse(truncated);
+              console.log('[gemini] parse_repaired_success strategy=truncation_repair');
+              return parsed;
+            } catch (parseErr) {
+              const opens = (sanitized.match(/{/g) || []).length;
+              const closes = (sanitized.match(/}/g) || []).length;
+              const hint = opens > closes ? 'likely_truncated' : 'malformed_content';
+              const finishReason = candidate?.finishReason || '<none>';
+              console.error(`[gemini] parse_failed error=${parseErr.message} hint=${hint} finishReason=${finishReason} len=${content.length} raw_start=${content.slice(0, 300)} raw_end=${content.slice(-200)}`);
+              throw parseErr;
+            }
           }
         }
       }
