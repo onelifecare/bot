@@ -65,6 +65,15 @@ function buildSystemPrompt(override) {
         '- If the customer asks for a human or the topic is sensitive/unclear, set handoff_required=true and next_stage="Closed".',
         '- Extract phone numbers, names, and any useful fields into extracted_fields.',
         '- Be helpful, warm, and professional.',
+        '',
+        'CRITICAL output rules (you MUST follow these to avoid breaking the system):',
+        '- NEVER use double-quote characters inside any string value. Use « » or single quotes instead. Example: «باقة الرشاقة» not "باقة الرشاقة".',
+        '- reply_text: max 2 short sentences. No line breaks. No markdown. No bullet lists.',
+        '- notes: max 5 words.',
+        '- handoff_reason: one short phrase or empty string.',
+        '- extracted_fields: only fields detected in this message, nothing else.',
+        '- recommended_offer: short name or null. Never a paragraph.',
+        '- Output a single compact JSON line. No pretty-printing. No trailing text. No markdown fences.',
       ].join('\n');
 }
 
@@ -176,6 +185,36 @@ function sanitizeGeminiJson(raw) {
     return text;
 }
 
+function repairTruncatedJson(text) {
+    let inString = false;
+    let escape = false;
+    const stack = [];
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (escape) { escape = false; continue; }
+        if (inString) {
+            if (ch === '\\') { escape = true; continue; }
+            if (ch === '"') { inString = false; continue; }
+            continue;
+        }
+        if (ch === '"') { inString = true; continue; }
+        if (ch === '{' || ch === '[') { stack.push(ch); continue; }
+        if (ch === '}' || ch === ']') { stack.pop(); continue; }
+    }
+    let repaired = text;
+    if (inString) repaired += '"';
+    let tail = repaired.replace(/\s+$/, '');
+    if (/[,:]$/.test(tail)) {
+        tail = tail.replace(/[,:]+$/, '');
+        repaired = tail;
+    }
+    while (stack.length > 0) {
+        const open = stack.pop();
+        repaired += (open === '{' ? '}' : ']');
+    }
+    return repaired;
+}
+
 function repairUnescapedQuotes(text) {
     const result = [];
     let i = 0;
@@ -239,7 +278,7 @@ class GeminiBrainProvider {
                         contents: [{ role: 'user', parts: [{ text: userMessage }] }],
                         generationConfig: {
                                     temperature: 0.3,
-                                    maxOutputTokens: 800,
+                                    maxOutputTokens: 1024,
                                     responseMimeType: 'application/json'
                         }
               },
@@ -286,12 +325,20 @@ class GeminiBrainProvider {
             const parsed = JSON.parse(repaired);
             console.log('[gemini] parse_repaired_success strategy=quote_repair');
             return parsed;
-          } catch (parseErr) {
-            const opens = (sanitized.match(/{/g) || []).length;
-            const closes = (sanitized.match(/}/g) || []).length;
-            const hint = opens > closes ? 'likely_truncated' : 'malformed_content';
-            console.error(`[gemini] parse_failed error=${parseErr.message} hint=${hint} len=${content.length} raw_start=${content.slice(0, 300)} raw_end=${content.slice(-200)}`);
-            throw parseErr;
+          } catch (_thirdErr) {
+            const truncFixed = repairTruncatedJson(repaired);
+            try {
+              const parsed = JSON.parse(truncFixed);
+              console.log('[gemini] parse_repaired_success strategy=truncation_repair');
+              return parsed;
+            } catch (parseErr) {
+              const opens = (sanitized.match(/{/g) || []).length;
+              const closes = (sanitized.match(/}/g) || []).length;
+              const hint = opens > closes ? 'likely_truncated' : 'malformed_content';
+              const finishReason = candidate?.finishReason || '<none>';
+              console.error(`[gemini] parse_failed error=${parseErr.message} hint=${hint} finishReason=${finishReason} len=${content.length} raw_start=${content.slice(0, 300)} raw_end=${content.slice(-200)}`);
+              throw parseErr;
+            }
           }
         }
       }
