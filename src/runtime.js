@@ -58,6 +58,17 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
           return { stopped: true, reason: 'page_ai_off' };
   }
 
+  if (!page.Page_Access_Token || !String(page.Page_Access_Token).trim()) {
+          await sheetClient.appendActionLog({
+                    entity: 'runtime',
+                    action: 'page_token_missing',
+                    pageId,
+                    threadId,
+                    reason: 'Pages.Page_Access_Token empty'
+          });
+          return { stopped: true, reason: 'page_token_missing' };
+  }
+
   const botControl = await sheetClient.getBotControlByPageId(pageId);
       if (!botControl || !isYes(botControl.AI_Enabled)) {
               await sheetClient.appendActionLog({
