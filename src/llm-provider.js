@@ -153,7 +153,9 @@ class GeminiBrainProvider {
         const userMessage = buildUserMessage(payload);
         const url = `${GEMINI_BASE_URL}/${encodeURIComponent(this.model)}:generateContent`;
 
-      const response = await axios.post(
+      let response;
+      try {
+        response = await axios.post(
               url,
               {
                         systemInstruction: { parts: [{ text: this.systemPrompt }] },
@@ -171,15 +173,34 @@ class GeminiBrainProvider {
                         },
                         timeout: 15000
               }
-      );
+        );
+      } catch (err) {
+        const status = err.response?.status;
+        const code = err.code;
+        const body = err.response?.data;
+        const bodyStr = body ? JSON.stringify(body).slice(0, 500) : '<no body>';
+        console.error(`[gemini] request_failed status=${status} code=${code} model=${this.model} body=${bodyStr}`);
+        throw err;
+      }
 
-      const parts = response.data?.candidates?.[0]?.content?.parts;
+      console.log(`[gemini] request_ok status=${response.status} model=${this.model}`);
+
+      const candidate = response.data?.candidates?.[0];
+      const parts = candidate?.content?.parts;
         const content = Array.isArray(parts) ? parts.map((p) => p?.text || '').join('').trim() : '';
         if (!content) {
+                const finishReason = candidate?.finishReason || '<none>';
+                const promptFeedback = JSON.stringify(response.data?.promptFeedback || {}).slice(0, 300);
+                console.error(`[gemini] empty_content finishReason=${finishReason} promptFeedback=${promptFeedback}`);
                 throw new Error('Gemini returned empty content');
         }
 
-      return JSON.parse(content);
+      try {
+        return JSON.parse(content);
+      } catch (parseErr) {
+        console.error(`[gemini] parse_failed error=${parseErr.message} raw=${content.slice(0, 500)}`);
+        throw parseErr;
+      }
   }
 }
 
