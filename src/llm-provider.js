@@ -220,6 +220,110 @@ function repairTruncatedJson(text) {
     return repaired;
 }
 
+function extractCompletedTopLevelFields(text) {
+    const out = {};
+    const start = text.indexOf('{');
+    if (start < 0) return out;
+
+    let i = start + 1;
+    const len = text.length;
+
+    const skipWs = () => {
+        while (i < len && (text[i] === ' ' || text[i] === '\t' || text[i] === '\n' || text[i] === '\r')) i++;
+    };
+
+    const readString = () => {
+        if (text[i] !== '"') return null;
+        const begin = i;
+        i++;
+        let escape = false;
+        while (i < len) {
+            const ch = text[i];
+            if (escape) { escape = false; i++; continue; }
+            if (ch === '\\') { escape = true; i++; continue; }
+            if (ch === '"') { i++; return text.slice(begin, i); }
+            i++;
+        }
+        return null;
+    };
+
+    const readValue = () => {
+        skipWs();
+        if (i >= len) return null;
+        const ch = text[i];
+        if (ch === '"') {
+            return readString();
+        }
+        if (ch === '{' || ch === '[') {
+            const open = ch;
+            const close = ch === '{' ? '}' : ']';
+            const begin = i;
+            let depth = 0;
+            let inString = false;
+            let escape = false;
+            while (i < len) {
+                const c = text[i];
+                if (escape) { escape = false; i++; continue; }
+                if (inString) {
+                    if (c === '\\') { escape = true; i++; continue; }
+                    if (c === '"') { inString = false; i++; continue; }
+                    i++;
+                    continue;
+                }
+                if (c === '"') { inString = true; i++; continue; }
+                if (c === open) { depth++; i++; continue; }
+                if (c === close) {
+                    depth--;
+                    i++;
+                    if (depth === 0) return text.slice(begin, i);
+                    continue;
+                }
+                i++;
+            }
+            return null;
+        }
+        const begin = i;
+        while (i < len) {
+            const c = text[i];
+            if (c === ',' || c === '}' || c === ']' || c === ' ' || c === '\t' || c === '\n' || c === '\r') break;
+            i++;
+        }
+        if (i === begin) return null;
+        return text.slice(begin, i);
+    };
+
+    while (i < len) {
+        skipWs();
+        if (i >= len) break;
+        if (text[i] === '}') break;
+        if (text[i] === ',') { i++; continue; }
+
+        const keyStart = i;
+        const keyRaw = readString();
+        if (keyRaw === null) break;
+
+        skipWs();
+        if (i >= len || text[i] !== ':') { i = keyStart; break; }
+        i++;
+
+        const valueStart = i;
+        const valueRaw = readValue();
+        if (valueRaw === null) { i = valueStart; break; }
+
+        try {
+            const pair = JSON.parse(`{${keyRaw}:${valueRaw}}`);
+            Object.assign(out, pair);
+        } catch (_pairErr) {
+            // skip malformed pair, keep going
+        }
+
+        skipWs();
+        if (i < len && text[i] === ',') i++;
+    }
+
+    return out;
+}
+
 function repairUnescapedQuotes(text) {
     const result = [];
     let i = 0;
@@ -337,6 +441,12 @@ class GeminiBrainProvider {
               console.log('[gemini] parse_repaired_success strategy=truncation_repair');
               return parsed;
             } catch (parseErr) {
+              const partial = extractCompletedTopLevelFields(sanitized);
+              const extractedCount = Object.keys(partial).length;
+              if (extractedCount > 0) {
+                console.log(`[gemini] parse_repaired_success strategy=partial_extract fields=${extractedCount}`);
+                return partial;
+              }
               const opens = (sanitized.match(/{/g) || []).length;
               const closes = (sanitized.match(/}/g) || []).length;
               const hint = opens > closes ? 'likely_truncated' : 'malformed_content';
