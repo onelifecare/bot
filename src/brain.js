@@ -153,7 +153,9 @@ export async function decideWithBrain({ messageText, state, context, provider })
         });
         return normalizeDecision(raw, fallback);
   } catch (err) {
-        return normalizeDecision({ ...fallback, notes: { ...fallback.notes, error: err.message } }, fallback);
+        const providerName = activeProvider?.providerName || 'unknown';
+        console.error(`[brain] provider_error provider=${providerName} message=${err.message}`);
+        return normalizeDecision({ ...fallback, notes: { ...fallback.notes, error: err.message, provider: providerName } }, fallback);
   }
 }
 
