@@ -142,6 +142,32 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
   /* --- Phase 2: build context and delegate to brain --- */
   const collectedFields = parseJsonSafe(chatRow.Collected_Fields_JSON, {});
 
+  /* P2: load real Offers catalog so the brain stops inventing names/prices.
+   * Failure is non-fatal — if the Offers tab is missing or unreadable, we
+   * log and continue with an empty offers list (legacy behaviour). */
+  let offers = [];
+  try {
+          const rawOffers = await sheetClient.listOffersForPage(pageId);
+          offers = (rawOffers || []).slice(0, 12).map((o) => ({
+                    Offer_Code: o.Offer_Code || '',
+                    Customer_Offer_Name: o.Customer_Offer_Name || o.Offer_Name || '',
+                    Public_Weight_Text: o.Public_Weight_Text || '',
+                    Price: o.Price || '',
+                    Components: o.Components || '',
+                    Recommended_For: o.Recommended_For || '',
+                    Internal_Recommendation: o.Internal_Recommendation || '',
+                    Health_Path: o.Health_Path || ''
+          }));
+  } catch (err) {
+          await sheetClient.appendActionLog({
+                    entity: 'runtime',
+                    action: 'offers_load_failed',
+                    pageId,
+                    threadId,
+                    reason: String(err && err.message || err).slice(0, 200)
+          });
+  }
+
   const businessContext = {
           page: { Page_ID: page.Page_ID, Page_Name: page.Page_Name || '', Page_Status: page.Page_Status },
           botControl: { AI_Enabled: botControl.AI_Enabled, Model: botControl.Model || '', Tone: botControl.Tone || '' },
@@ -150,7 +176,8 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
                     Chat_Stage: chatRow.Chat_Stage || 'Opening',
                     Is_Archived: chatRow.Is_Archived || 'No',
                     is_new_chat: isNewChat
-          }
+          },
+          offers
   };
 
   const brain = await decideWithBrain({

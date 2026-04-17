@@ -108,6 +108,10 @@ function buildUserMessage(payload) {
                 if (ctx.botControl.Tone) parts.push(`Tone: ${ctx.botControl.Tone}`);
                 if (ctx.botControl.Model) parts.push(`Model preference: ${ctx.botControl.Model}`);
         }
+        if (Array.isArray(ctx.offers) && ctx.offers.length > 0) {
+                parts.push('Available offers (only choose from this list; recommended_offer MUST be one of these Offer_Code values; never invent prices, names, or components outside this list):');
+                parts.push(JSON.stringify(ctx.offers));
+        }
   }
 
   return parts.join('\n');
