@@ -168,6 +168,45 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
           });
   }
 
+  /* P2.5: resolve persona from Pages.Assigned_Persona_ID. Failure is
+   * non-fatal — if the ID is empty, missing, inactive, or the Personas tab
+   * is unreadable, we log (when meaningful) and continue with null persona
+   * so identity questions fall through to the generic safe fallback. */
+  let persona = null;
+  const assignedPersonaId = String(page.Assigned_Persona_ID || '').trim();
+  if (assignedPersonaId) {
+          try {
+                    const row = await sheetClient.getPersonaById(assignedPersonaId);
+                    if (row) {
+                              persona = {
+                                        Persona_ID: row.Persona_ID || '',
+                                        Persona_Name: row.Persona_Name || '',
+                                        Intro_Message: row.Intro_Message || '',
+                                        If_Asked_Who_Are_You: row.If_Asked_Who_Are_You || '',
+                                        If_Asked_Are_You_Bot: row.If_Asked_Are_You_Bot || '',
+                                        Escalation_Message: row.Escalation_Message || '',
+                                        Tone_Notes: row.Tone_Notes || ''
+                              };
+                    } else {
+                              await sheetClient.appendActionLog({
+                                        entity: 'runtime',
+                                        action: 'persona_missing',
+                                        pageId,
+                                        threadId,
+                                        reason: `Assigned_Persona_ID=${assignedPersonaId} not found or inactive`
+                              });
+                    }
+          } catch (err) {
+                    await sheetClient.appendActionLog({
+                              entity: 'runtime',
+                              action: 'persona_load_failed',
+                              pageId,
+                              threadId,
+                              reason: String(err && err.message || err).slice(0, 200)
+                    });
+          }
+  }
+
   const businessContext = {
           page: { Page_ID: page.Page_ID, Page_Name: page.Page_Name || '', Page_Status: page.Page_Status },
           botControl: { AI_Enabled: botControl.AI_Enabled, Model: botControl.Model || '', Tone: botControl.Tone || '' },
@@ -177,7 +216,8 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
                     Is_Archived: chatRow.Is_Archived || 'No',
                     is_new_chat: isNewChat
           },
-          offers
+          offers,
+          persona
   };
 
   const brain = await decideWithBrain({
@@ -289,7 +329,8 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
                     confidence: brain.confidence,
                     handoff_required: brain.handoff_required,
                     recommended_offer: brain.recommended_offer || '',
-                    offers_count: offers.length
+                    offers_count: offers.length,
+                    persona_id: persona ? persona.Persona_ID : ''
           }
   });
 

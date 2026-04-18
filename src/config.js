@@ -25,7 +25,8 @@ export const config = {
     chatControl: process.env.SHEET_CHATCONTROL_TAB || 'ChatControl',
     actionLog: process.env.SHEET_ACTION_LOG_TAB || 'Audit',
     handoffs: process.env.SHEET_HANDOFFS_TAB || 'Handoffs',
-    offers: process.env.SHEET_OFFERS_TAB || 'Offers'
+    offers: process.env.SHEET_OFFERS_TAB || 'Offers',
+    personas: process.env.SHEET_PERSONAS_TAB || 'Personas'
   },
   greetingText: process.env.STATIC_GREETING_AR || 'أهلاً بيك 👋 أنا معاك من فريق One Life Care، تحت أمرك.',
 

@@ -145,6 +145,17 @@ export class SheetClient {
         });
   }
 
+  async getPersonaById(personaId) {
+        const id = String(personaId || '').trim();
+        if (!id) return null;
+        const tabName = this.tabs.personas || 'Personas';
+        const rows = await this.readTab(tabName);
+        const row = rows.find((r) => String(r.Persona_ID || '').trim() === id);
+        if (!row) return null;
+        if (String(row.Active || '').trim().toLowerCase() !== 'yes') return null;
+        return row;
+  }
+
   async listRecentAudit(limit = 20) {
         const rows = await this.readTab(this.tabs.actionLog);
         return rows.slice(-Math.max(1, Number(limit))).reverse();

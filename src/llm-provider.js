@@ -108,6 +108,11 @@ function buildUserMessage(payload) {
                 if (ctx.botControl.Tone) parts.push(`Tone: ${ctx.botControl.Tone}`);
                 if (ctx.botControl.Model) parts.push(`Model preference: ${ctx.botControl.Model}`);
         }
+        if (ctx.persona && (ctx.persona.Persona_Name || ctx.persona.Intro_Message || ctx.persona.If_Asked_Who_Are_You)) {
+                parts.push('Persona (speak as this persona; NEVER invent a different identity, name, title, or credentials):');
+                parts.push(JSON.stringify(ctx.persona));
+                parts.push('Identity questions (e.g. "مين انتي؟", "انتي بوت؟", "human or AI?") MUST be answered using the Persona fields above — prefer If_Asked_Who_Are_You / If_Asked_Are_You_Bot verbatim or a close paraphrase. Use Persona_Name as the identity. Use Tone_Notes to shape tone. Never claim to be a different person, a different company, or a generic "AI assistant" that contradicts the Persona fields.');
+        }
         if (Array.isArray(ctx.offers) && ctx.offers.length > 0) {
                 parts.push('Available offers (only choose from this list; recommended_offer MUST be one of these Offer_Code values; never invent prices, names, or components outside this list):');
                 parts.push(JSON.stringify(ctx.offers));
