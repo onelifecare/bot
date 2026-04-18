@@ -156,6 +156,26 @@ export class SheetClient {
         return row;
   }
 
+  /* Rescue Pass: list raw handoff rows for a page. No Reason_Type
+   * filtering — the dashboard is responsible for filtering by
+   * Chat_Status (Waiting_Human / Human_Active / Closed). If pageId
+   * is empty/missing, returns all rows. Sorted newest-first by
+   * Created_At so the dashboard shows the most recent at the top. */
+  async listHandoffsForPage(pageId) {
+        const tabName = this.tabs.handoffs || 'Handoffs';
+        const rows = await this.readTab(tabName);
+        const target = String(pageId || '').trim();
+        const filtered = target
+              ? rows.filter((r) => String(r.Page_ID || '').trim() === target)
+              : rows;
+        return filtered.slice().sort((a, b) => {
+              const at = String(a.Created_At || '');
+              const bt = String(b.Created_At || '');
+              if (at === bt) return 0;
+              return at > bt ? -1 : 1;
+        });
+  }
+
   async listRecentAudit(limit = 20) {
         const rows = await this.readTab(this.tabs.actionLog);
         return rows.slice(-Math.max(1, Number(limit))).reverse();
