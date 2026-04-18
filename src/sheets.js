@@ -134,6 +134,17 @@ export class SheetClient {
         return rows.filter((r) => String(r.Page_ID) === String(pageId));
   }
 
+  async listOffersForPage(pageId) {
+        const tabName = this.tabs.offers || 'Offers';
+        const rows = await this.readTab(tabName);
+        const target = String(pageId);
+        return rows.filter((r) => {
+              if (String(r.Active || '').trim().toLowerCase() !== 'yes') return false;
+              const rowPageId = String(r.Page_ID || '').trim();
+              return rowPageId === '' || rowPageId === target;
+        });
+  }
+
   async listRecentAudit(limit = 20) {
         const rows = await this.readTab(this.tabs.actionLog);
         return rows.slice(-Math.max(1, Number(limit))).reverse();
