@@ -287,7 +287,9 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
                     proposed_stage: brain.next_stage,
                     stage_guard_rejected: guard.rejected,
                     confidence: brain.confidence,
-                    handoff_required: brain.handoff_required
+                    handoff_required: brain.handoff_required,
+                    recommended_offer: brain.recommended_offer || '',
+                    offers_count: offers.length
           }
   });
 
