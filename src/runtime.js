@@ -40,6 +40,46 @@ function nowIso() {
       return new Date().toISOString();
 }
 
+/*
+ * P2.6 — Incomplete Output Guard.
+ *
+ * Detects when the brain output is structurally complete (no exception
+ * thrown by the provider) but semantically unusable. Two cases only:
+ *
+ *   1) reply_text collapsed to brain.js's fallback literal. This is the
+ *      definitive signature of a Gemini partial_extract that did not
+ *      recover reply_text — normalizeDecision() then filled the slot
+ *      with the fallback Arabic sentence and the customer sees it.
+ *      The literal MUST stay in sync with the fallback in brain.js
+ *      (decideWithBrain → const fallback).
+ *
+ *   2) Stage is (or is moving into) Recommendation, offers were loaded,
+ *      but recommended_offer is empty. Per the doctrine, Recommendation
+ *      without a chosen offer is incomplete by definition.
+ *
+ * Returns { incomplete: bool, reason: string }. Reason codes:
+ *   - reply_text_fallback_literal
+ *   - recommendation_without_offer
+ */
+const FALLBACK_REPLY_LITERAL = 'وصلتني رسالتك، لحظة.';
+
+function detectIncompleteBrainOutput({ brain, currentStage, proposedNextStage, offersCount }) {
+      const replyText = String(brain && brain.reply_text || '').trim();
+      if (replyText === FALLBACK_REPLY_LITERAL || replyText === '') {
+            return { incomplete: true, reason: 'reply_text_fallback_literal' };
+      }
+
+      const stageIsRecommendation =
+            String(proposedNextStage || '').trim() === 'Recommendation' ||
+            String(currentStage || '').trim() === 'Recommendation';
+      const recommendedOffer = String(brain && brain.recommended_offer || '').trim();
+      if (stageIsRecommendation && offersCount > 0 && !recommendedOffer) {
+            return { incomplete: true, reason: 'recommendation_without_offer' };
+      }
+
+      return { incomplete: false, reason: '' };
+}
+
 function buildNewChatRow({ threadId, pageId }) {
       return {
               Thread_ID: threadId,
@@ -279,6 +319,82 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
 
                   return { stopped: false, isNewChat, handoff: true, intent: brain.intent };
         }
+
+  /* --- P2.6: Incomplete Output Guard ---
+   * Reuses the existing handoff machinery when the brain returned a
+   * structurally complete object whose reply or recommendation is
+   * actually unusable. AI_Chat goes OFF for this thread (so we stop
+   * spamming the generic fallback), a Handoffs row is opened for the
+   * human team, and Chat_Stage is preserved at its previous valid
+   * value (we do NOT advance into Recommendation/Booking on incomplete
+   * output). */
+  const incompleteCheck = detectIncompleteBrainOutput({
+          brain,
+          currentStage: chatRow.Chat_Stage || 'Opening',
+          proposedNextStage: brain.next_stage,
+          offersCount: offers.length
+  });
+
+  if (incompleteCheck.incomplete) {
+          const customerName = collectedFields.customer_name || collectedFields.name || '';
+          const phone1 = collectedFields.phone || collectedFields.phone_1 || '';
+          const previousStage = chatRow.Chat_Stage || 'Opening';
+
+          await sheetClient.appendActionLog({
+                    entity: 'runtime',
+                    action: 'brain_output_incomplete',
+                    pageId,
+                    threadId,
+                    reason: incompleteCheck.reason,
+                    meta: {
+                              current_stage: previousStage,
+                              proposed_stage: brain.next_stage || '',
+                              offers_count: offers.length,
+                              persona_id: persona ? persona.Persona_ID : '',
+                              recommended_offer: brain.recommended_offer || '',
+                              intent: brain.intent || '',
+                              confidence: brain.confidence,
+                              reply_was_fallback: incompleteCheck.reason === 'reply_text_fallback_literal'
+                    }
+          });
+
+          await sheetClient.appendHandoff({
+                    pageId,
+                    threadId,
+                    reason: 'Incomplete_AI_Output',
+                    reasonNote: `code=${incompleteCheck.reason}; stage=${previousStage}->${brain.next_stage || ''}; offers=${offers.length}; rec=${brain.recommended_offer || ''}`,
+                    customerName,
+                    phone1
+          });
+
+          await sheetClient.updateChatAiByThreadAndPage({
+                    pageId,
+                    threadId,
+                    value: 'OFF',
+                    reason: 'Incomplete_AI_Output'
+          });
+
+          await sheetClient.updateRowInTab({
+                    tabName: sheetClient.tabs.chatControl,
+                    match: (r) => String(r.Page_ID) === String(pageId) && String(r.Thread_ID) === String(threadId),
+                    updates: { Last_Action: 'handoff_incomplete', Last_Updated_At: nowIso() }
+          });
+
+          const handoffText = (persona && persona.Escalation_Message) || config.greetingText;
+          await sendTextMessage({
+                    pageAccessToken: page.Page_Access_Token,
+                    recipientPsid: threadId,
+                    text: handoffText
+          });
+
+          return {
+                    stopped: false,
+                    isNewChat,
+                    handoff: true,
+                    incomplete: true,
+                    reason: incompleteCheck.reason
+          };
+  }
 
   /* --- Normal AI reply path --- */
   const replyText = brain.reply_text || config.greetingText;
