@@ -81,7 +81,12 @@ class MockBrainProvider {
         const stage = payload?.state?.chat_stage || 'Opening';
 
       const wantsHuman = /انسان|موظف|اكلم|اتكلم|فريق|الدعم|ممثل|human|agent/i.test(normalized);
-        const sensitive = /عمليه|نزيف|حامل|خطر|سكر|ضغط/i.test(normalized);
+        // Rescue Pass: "ضغط" alone is NOT a sensitive keyword — generic
+        // pressure mentions are caught by isGenericPressureMessage() in
+        // runtime.js and routed to a clarifier. Specific pressure cases
+        // (e.g. "ضغط عالي متقطع") reach the brain and can still be
+        // classified as sensitive via qualifiers like "نزيف"/"حامل".
+        const sensitive = /عمليه|نزيف|حامل|خطر|سكر/i.test(normalized);
         const wantsOffers = /عرض|عروض|باقه|باقات|سعر|اسعار|اشتراك|تكلفه|كام/i.test(normalized);
         const wantsFollowup = /تفاصيل|اكتر|كمان|زياده|توضيح|ايضاح|فهمت|اشرح/i.test(normalized);
 

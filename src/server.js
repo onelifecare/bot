@@ -71,11 +71,22 @@ app.get('/api/dashboard/bootstrap', requireDashboardToken, async (req, res) => {
     const chats = selectedPageId ? await sheetClient.listChatControlByPageId(selectedPageId) : [];
     const audit = await sheetClient.listRecentAudit(20);
 
+    /* Rescue Pass: expose real runtime-written Handoffs to the dashboard.
+     * Failure is non-fatal — the dashboard degrades to chats/audit only
+     * rather than erroring the whole bootstrap call. */
+    let handoffs = [];
+    try {
+      handoffs = selectedPageId ? await sheetClient.listHandoffsForPage(selectedPageId) : [];
+    } catch (handoffErr) {
+      console.error('[bootstrap] handoffs_load_failed:', handoffErr.message);
+    }
+
     res.json({
       selectedPage,
       botControl,
       chats,
       audit,
+      handoffs,
       pages: pages.map((p) => ({
         Page_ID: p.Page_ID,
         Page_Name: p.Page_Name,

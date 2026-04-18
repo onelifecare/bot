@@ -5141,6 +5141,18 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(auditEl){
       auditEl.innerHTML = audit.slice(0,6).map(a=>`<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px"><span style="font-weight:800">${a.Who||'system'}</span> — ${a.Action||''}<span style="color:var(--gray);font-size:10px;float:left">${a.Created_At||''}</span></div>`).join('') || '<div style="color:var(--gray);font-size:13px">لا يوجد تعديلات بعد</div>';
     }
+
+    /* Rescue Pass: replace the local DB.handoffs mock with real runtime
+     * rows from /api/dashboard/bootstrap. No filtering on Reason_Type —
+     * the existing UI filters by Chat_Status (Waiting_Human by default).
+     * If the backend did not return handoffs (network hiccup / 500),
+     * keep whatever DB.handoffs already held so the screen never blanks. */
+    if(Array.isArray(data.handoffs)){
+      if(typeof DB !== 'undefined' && DB){ DB.handoffs = data.handoffs; }
+      if(typeof renderHandoffs === 'function') renderHandoffs();
+      if(typeof renderHome === 'function') renderHome();
+      if(typeof renderQuickHandoffs === 'function') renderQuickHandoffs();
+    }
   }
 
   window.toggleAI = async function(){

@@ -106,6 +106,31 @@ function parseJsonSafe(text, fallback) {
       catch { return fallback; }
 }
 
+/*
+ * Rescue Pass — generic blood-pressure detector.
+ *
+ * Catches messages that merely mention pressure without any qualifier
+ * (high/low, regular/irregular, on meds, etc.) or any other concurrent
+ * sensitive condition. Those messages should NOT be routed as a
+ * sensitive-health handoff; the operator must ask the customer a
+ * clarifying question first. Specific cases ("ضغطي عالي متقطع",
+ * "ضغط + حامل") fall through to the normal brain path untouched so
+ * the existing sensitive routing in the brain still applies.
+ *
+ * Deliberately narrow: must contain a pressure token AND must not
+ * contain any disqualifier. No medical logic beyond the token list.
+ */
+function isGenericPressureMessage(text) {
+      const t = String(text || '').trim();
+      if (!t) return false;
+      if (!/(?:^|[^\p{L}])(?:ال)?ضغط(?:ي|ى)?(?:[^\p{L}]|$)/u.test(t)) return false;
+      const disqualifiers = /عالي|عالى|مرتفع|منخفض|واطي|واطى|هابط|متقطع|منتظم|مش\s*منتظم|علاج|دوا|دواء|أدوية|ادوية|حبوب|كبسولات|نزيف|حامل|حمل|سكر|قلب|كلى|كبد|جلطه|جلطة|سكتة|سكته|عمليه|عملية|خطر|حاله\s*خاصه|حالة\s*خاصة/i;
+      if (disqualifiers.test(t)) return false;
+      return true;
+}
+
+const PRESSURE_CLARIFIER_TEXT = 'حضرتك الضغط عندك عالي ولا منخفض؟ ومنتظم ولا بيتقطع؟ وعلى علاج منتظم ولا لأ؟';
+
 export async function processIncomingText({ event, config, sheetClient, brainProvider }) {
       const pageId = event.pageId;
       const threadId = event.senderPsid;
@@ -178,6 +203,37 @@ export async function processIncomingText({ event, config, sheetClient, brainPro
               };
 
   await sheetClient.upsertChatControl({ row: chatRow });
+
+  /* Rescue Pass — generic-pressure clarifier.
+   * Short-circuits before any LLM call: if the customer merely said
+   * "ضغط" / "عندي ضغط" / "ضغطي" with no qualifier, we ask for more
+   * detail once instead of triggering a sensitive-health handoff.
+   * Chat_Stage and AI_Chat are left untouched so the next message
+   * flows through the normal brain path. */
+  if (isGenericPressureMessage(event.text)) {
+          await sendTextMessage({
+                    pageAccessToken: page.Page_Access_Token,
+                    recipientPsid: threadId,
+                    text: PRESSURE_CLARIFIER_TEXT
+          });
+
+          await sheetClient.updateRowInTab({
+                    tabName: sheetClient.tabs.chatControl,
+                    match: (r) => String(r.Page_ID) === String(pageId) && String(r.Thread_ID) === String(threadId),
+                    updates: { Last_Action: 'pressure_clarify_asked', Last_Updated_At: nowIso() }
+          });
+
+          await sheetClient.appendActionLog({
+                    entity: 'runtime',
+                    action: 'pressure_clarify_asked',
+                    pageId,
+                    threadId,
+                    reason: 'generic pressure mention — asking clarifier before routing',
+                    meta: { current_stage: chatRow.Chat_Stage || 'Opening', text: String(event.text || '').slice(0, 80) }
+          });
+
+          return { stopped: false, isNewChat, clarified: true, reason: 'generic_pressure' };
+  }
 
   /* --- Phase 2: build context and delegate to brain --- */
   const collectedFields = parseJsonSafe(chatRow.Collected_Fields_JSON, {});
