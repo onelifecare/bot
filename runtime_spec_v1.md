@@ -22,6 +22,105 @@
 
 ---
 
+## 1.A Operating Doctrine — Persona-driven, Dashboard-controlled, AI-assisted selling
+
+This section is **binding on every later section** (intent, stage, offer, objection, booking, post-send) and on every code path in `src/`. Any implementation that contradicts it is out of spec, regardless of which step it lives under.
+
+### Principle (one sentence)
+The dashboard + the sheet are the sole source of truth for customer-facing content. The persona controls tone and identity. The AI is a selector and persuader on top of that truth — not an author of new truth.
+
+### 1.A.1 Dashboard is the source of truth
+All customer-facing content — offer names, prices, components, messages, variants, media, shipping values, health rules — originates from the dashboard and is persisted in the Google Sheet tabs (`Offers`, `Messages`, `Variants`, `MediaAssets`, `ShippingRules`, `HealthGate`, `Personas`, `Products`).
+
+Runtime **reads** these tabs every turn (with the cache rules in § 3). Runtime **never invents** a value for any of these fields. If the dashboard does not carry a value, the runtime does not make one up — it either falls back to another valid sheet value, skips that step, or hands off.
+
+### 1.A.2 Persona is runtime-relevant, not dashboard decoration
+`Personas` is not cosmetic. It governs:
+- identity (how the bot introduces itself — `Intro_Message`)
+- tone (read from `Tone_Notes` + `Persona_Name`)
+- self-identification answers (`If_Asked_Who_Are_You`, `If_Asked_Are_You_Bot`)
+- escalation style (`Escalation_Message`)
+- every placeholder-substituted reply rendered by the runtime
+
+Runtime must resolve `Pages.Assigned_Persona_ID` → `Personas` row on **every turn** (cached per § 3) and route it through the reply renderer. A bot without persona data is a warning, not a success — log and continue with a neutral placeholder, never synthesize a persona identity.
+
+### 1.A.3 AI scope — what the AI is allowed to do
+The AI (current Gemini provider, future providers) is authorised to:
+
+1. **Understand intent** — classify the customer turn (see § 4 intent table) and extract fields (weight, target loss, governorate, phone, etc.) into `state.*`.
+2. **Choose the best valid offer** — but only from the `Offers` rows actually loaded into `business_context.offers` after the `Active=Yes` + `Health_Path` + `Page_ID/Shared` filters. The AI's `recommended_offer` output **must** match an `Offer_Code` from that pre-filtered set.
+3. **Choose the best valid scenario/variant** — same rule, from `Messages`/`Variants` rows the runtime loaded.
+4. **Do grounded persuasion** — frame value, highlight benefits, compare options, using `Customer_Offer_Name`, `Public_Weight_Text`, `Price`, `Components`, `Recommended_For`, `Internal_Recommendation`, `Health_Path` verbatim from the loaded rows.
+5. **Do grounded comparisons** — e.g. "العرض X أوفر من العرض Y بكذا" only when the numbers are literally present in the sheet.
+6. **Do grounded arithmetic** — e.g. "لو أخدتي 3 كورسات سعر الكورس الواحد يبقى X" **only if** X is computed from actual `Price` / `Components` values the runtime loaded. Never from invented numbers.
+
+### 1.A.4 AI scope — what the AI is NOT allowed to do
+The AI must **never** invent:
+- offer names, product names, package names
+- prices (current, old, bundle, or per-unit derivatives of imagined totals)
+- package contents / components
+- product claims or medical effects
+- shipping values, governorate delivery times, prepayment rules
+- persona identity details, titles, or credentials not in `Personas`
+- `Scenario_Key` or `Offer_Code` values not found in the loaded context
+
+If the AI does not have a grounded answer, acceptable fallbacks are: ask a clarifying question, re-route to an earlier stage, or request a human handoff. Fabrication is never an acceptable fallback.
+
+### 1.A.5 Free-form generation is minimised
+The preferred architecture is:
+1. **Dashboard-controlled content** — the canonical text lives in `Offers.Offer_Bot_Brief`, `Offers.Offer_Why_Message`, `Offers.Offer_Close_Question`, `Messages.Message_Text`, `Variants.Reply_Text`. The runtime sends these after placeholder substitution (§ 8) with minimal or zero AI rewriting for critical sales steps.
+2. **Persona-driven rendering** — tone/intro/escalation come from `Personas`, not from the AI improvising.
+3. **AI-assisted selection and persuasion** — the AI's job is to pick the right row and wrap it in a persona-consistent bridge sentence, not to rewrite the row.
+
+Free-form LLM replies are acceptable **only** for:
+- the very first Opening ice-breaker when no prior state exists
+- short clarifying questions during Diagnosis when the runtime genuinely needs one more field
+- soft bridge sentences between dashboard-sourced messages
+
+Free-form LLM replies are **not** acceptable for:
+- the 6-step offer sequence (§ 6) — all items come from the sheet, in locked order
+- objection responses (§ 7) — taken from `Variants.Reply_Text`
+- booking data requests (§ 5 booking required fields list) — fixed prompts
+- health-gate responses (§ 5 health gate) — taken from `Messages` by `Scenario_Key`
+- post-send / delivery instructions — taken from `Messages`/`ShippingRules`
+
+### 1.A.6 Grounded math rules
+When the AI performs any numeric framing:
+- Inputs must be values already loaded from the sheet in the current turn.
+- The resulting string must be reproducible from those inputs — no rounding that hides the source, no unit change without explicit source.
+- Currency, weight units, and counts must echo the sheet's wording.
+- If any input is missing, the AI must drop the framing entirely, not estimate.
+
+### 1.A.7 The locked selling flow is untouched by this doctrine
+This doctrine **does not** change the flow:
+
+```
+Opening → Diagnosis → Recommendation → (Objection ↔ Recommendation)*
+       → Booking → PostSend → Closed
+```
+
+Nor does it change the locked 6-step offer sequence (Brief → Image → Why → [Components if asked] → Proof → Close) in § 6. It strengthens them: every step in that flow must source its words from the dashboard, rendered in the active persona, with the AI doing selection + persuasion only.
+
+### 1.A.8 Runtime self-check at integration boundaries
+At each integration boundary the runtime must enforce this doctrine mechanically:
+- **After the AI returns a decision**: if `recommended_offer` is non-empty, it must equal an `Offer_Code` from the pre-filtered offers list of the current turn. Otherwise drop it and log `grounding_reject` in `Audit.meta`.
+- **After the AI returns `reply_text`**: for stages where free-form is not acceptable (§ 1.A.5), discard the AI's `reply_text` and send the dashboard-sourced text instead.
+- **At placeholder substitution** (§ 8): unresolved placeholders collapse to empty, they are never left as `{xxx}` and never AI-filled.
+- **At stage transition**: the stage transition table (enforced in `src/runtime.js`) stays the single authority. AI-proposed `next_stage` outside the allowed set is rejected (already live behaviour as of P1).
+
+### 1.A.9 Contract summary
+The runtime is:
+
+> **Persona-driven + Dashboard-controlled + AI-assisted selling**
+
+and must never become:
+
+> freestyle LLM selling.
+
+Any future PR that widens the AI's authoring surface beyond § 1.A.3 or narrows the dashboard's authority over § 1.A.1 is out of spec and must be rejected at review.
+
+---
+
 ## 2. Runtime step-by-step
 
 ### Step 1 — Intake

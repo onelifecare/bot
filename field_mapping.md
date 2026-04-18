@@ -11,6 +11,8 @@ Legend:
 
 Only fields that matter to runtime v1 are listed in detail. Fields not in the list still exist in the tab but are either dashboard-only or reserved for future use.
 
+> **Doctrine binding (see `runtime_spec_v1.md § 1.A`):** every RT-R field below is a value the runtime consumes as-is from the dashboard/sheet — the AI may choose **which** row to use and **how** to frame it, but never invents the value itself. Price, offer name, components, shipping, health action, variant reply text, persona identity: all sourced, never synthesised.
+
 ---
 
 ## Pages
