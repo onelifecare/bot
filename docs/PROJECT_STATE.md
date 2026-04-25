@@ -59,6 +59,25 @@ These four values must remain aligned or the Messenger flow will break:
 - `FB_APP_SECRET` (deployment env ↔ new Meta app secret)
 - `Pages.Page_Access_Token` (Google Sheet ↔ token generated from the new app)
 
+## Operating Doctrine (canonical)
+Full version: `runtime_spec_v1.md § 1.A`. Governs all runtime work going forward.
+
+- **Source of truth**: the dashboard + Google Sheet tabs own all customer-facing content — offer names, prices, components, messages, variants, media, shipping, health rules. Runtime reads them every turn; runtime never authors them.
+- **Persona is runtime-relevant**, not decoration. `Personas` controls identity, tone, intro, escalation. Resolved on every turn from `Pages.Assigned_Persona_ID`.
+- **AI is a selector + persuader**, not an author. Allowed: intent classification, field extraction, picking the best valid offer/variant from loaded rows, grounded persuasion, grounded comparisons, grounded math (e.g. per-course price) **only** from real sheet values.
+- **AI must never invent**: offer names, prices, package contents, product claims, shipping values, persona identity.
+- **Free-form LLM replies are minimised**. Critical sales content (6-step offer sequence, objection variants, health-gate replies, booking prompts, delivery/post-send) comes from the sheet verbatim (after placeholder substitution). The AI only composes short bridges and clarifying questions.
+- **Locked selling flow is unchanged**: Opening → Diagnosis → Recommendation → (Objection ↔ Recommendation)\* → Booking → PostSend → Closed, with Brief → Image → Why → [Components if asked] → Proof → Close preserved.
+- **Target**: Persona-driven + Dashboard-controlled + AI-assisted selling. Not: freestyle LLM selling.
+
+Status of implementation vs doctrine (live as of PR #23 merged):
+- ✅ Real Offers catalog is injected into `business_context` every turn (`src/runtime.js`).
+- ✅ System prompt forbids invention outside loaded context (`src/llm-provider.js`).
+- ✅ Stage transition table enforced at runtime (`src/runtime.js`, Patch P1 merged).
+- ✅ Audit meta carries `recommended_offer` + `offers_count` for verifiability.
+- ⏳ Persona wiring into `business_context` — not yet active. The doctrine mandates it; scope it as a future persona-wiring patch, parallel to the P3 locked-sequence dispatch.
+- ⏳ Dashboard-sourced messages for the 6-step offer sequence / objection variants / health-gate replies — not yet active (P3+). Until then, free-form LLM replies cover these, which the doctrine explicitly marks as temporary.
+
 ## Work tracks from this point
 ### Track A — Meta setup (resolved, monitor-only)
 The earlier admin/test-only limitation is resolved via the new Meta app path above.

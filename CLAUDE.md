@@ -33,6 +33,19 @@ The bot handles:
 - Provider initialization should happen once at startup, not per message request.
 - Human handoff flow must remain functional.
 
+## Operating Doctrine (binding)
+Full doctrine lives in `runtime_spec_v1.md § 1.A`. Summary that governs every change in this repo:
+
+1. **Dashboard is the source of truth.** All customer-facing content — offer names, prices, components, messages, variants, media, shipping, health rules — originates from the dashboard and is persisted in the Google Sheet tabs. The runtime reads these tabs every turn; it never authors them.
+2. **Persona is runtime-relevant.** `Personas` controls identity, tone, intro, escalation style. Resolve `Pages.Assigned_Persona_ID` on every turn. Never synthesise persona details.
+3. **AI is a selector and persuader, not an author.** The AI may: understand intent, extract state fields, choose the best valid offer/variant (from rows actually loaded this turn), do grounded persuasion, do grounded comparisons, and do grounded arithmetic (e.g. per-course price) **only** from real sheet values.
+4. **The AI must never invent** offer names, prices, package contents, product claims, shipping values, or persona identity details.
+5. **Free-form LLM replies are minimised.** Critical sales content (the 6-step offer sequence, objection variants, health-gate replies, booking prompts, post-send/delivery instructions) comes from the dashboard — never from a free-form LLM rewrite. The AI may only compose short bridge sentences and clarifying questions.
+6. **The locked selling flow is untouched:** Opening → Diagnosis → Recommendation → (Objection ↔ Recommendation)* → Booking → PostSend → Closed, with the Brief → Image → Why → [Components] → Proof → Close sequence preserved verbatim.
+7. **Target architecture:** Persona-driven + Dashboard-controlled + AI-assisted selling. Not: freestyle LLM selling.
+
+Any PR that widens the AI's authoring surface beyond point 3, or narrows the dashboard's authority over point 1, is out of spec and must be rejected at review.
+
 ## Current strategic direction
 - The current repo contains an OpenAI-compatible provider wiring.
 - Strategic product direction has changed:
